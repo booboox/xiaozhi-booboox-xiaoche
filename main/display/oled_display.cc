@@ -16,6 +16,8 @@
 LV_FONT_DECLARE(BUILTIN_TEXT_FONT);
 LV_FONT_DECLARE(BUILTIN_ICON_FONT);
 LV_FONT_DECLARE(font_awesome_30_1);
+LV_FONT_DECLARE(font_puhui_basic_20_4);
+LV_FONT_DECLARE(font_puhui_basic_30_4);
 
 OledDisplay::OledDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel_handle_t panel,
     int width, int height, bool mirror_x, bool mirror_y)
@@ -81,6 +83,8 @@ OledDisplay::OledDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel_handl
     } else {
         SetupUI_128x32();
     }
+
+    SetupStandbyClockUI();
 }
 
 OledDisplay::~OledDisplay() {
@@ -112,6 +116,11 @@ OledDisplay::~OledDisplay() {
     }
     if (container_ != nullptr) {
         lv_obj_del(container_);
+    }
+    if (standby_container_ != nullptr) {
+        standby_time_label_ = nullptr;
+        standby_date_label_ = nullptr;
+        lv_obj_del(standby_container_);
     }
 
     if (panel_ != nullptr) {
@@ -153,6 +162,45 @@ void OledDisplay::SetChatMessage(const char* role, const char* content) {
             lv_obj_remove_flag(content_right_, LV_OBJ_FLAG_HIDDEN);
         }
     }
+}
+
+void OledDisplay::ShowStandbyClock(bool show) {
+    DisplayLockGuard lock(this);
+
+    if (standby_container_ == nullptr) {
+        return;
+    }
+
+    if (show) {
+        if (container_ != nullptr) {
+            lv_obj_add_flag(container_, LV_OBJ_FLAG_HIDDEN);
+        }
+        if (status_bar_ != nullptr && height_ >= 64) {
+            lv_obj_add_flag(status_bar_, LV_OBJ_FLAG_HIDDEN);
+        }
+        lv_obj_remove_flag(standby_container_, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_move_foreground(standby_container_);
+    } else {
+        lv_obj_add_flag(standby_container_, LV_OBJ_FLAG_HIDDEN);
+
+        if (container_ != nullptr) {
+            lv_obj_remove_flag(container_, LV_OBJ_FLAG_HIDDEN);
+        }
+        if (status_bar_ != nullptr && height_ >= 64) {
+            lv_obj_remove_flag(status_bar_, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+}
+
+void OledDisplay::SetStandbyClock(const char* time_text, const char* date_text) {
+    DisplayLockGuard lock(this);
+
+    if (standby_time_label_ == nullptr || standby_date_label_ == nullptr) {
+        return;
+    }
+
+    lv_label_set_text(standby_time_label_, time_text ? time_text : "");
+    lv_label_set_text(standby_date_label_, date_text ? date_text : "");
 }
 
 void OledDisplay::SetupUI_128x64() {
@@ -372,6 +420,47 @@ void OledDisplay::SetupUI_128x32() {
     lv_anim_set_repeat_count(&a, LV_ANIM_REPEAT_INFINITE);
     lv_obj_set_style_anim(chat_message_label_, &a, LV_PART_MAIN);
     lv_obj_set_style_anim_duration(chat_message_label_, lv_anim_speed_clamped(60, 300, 60000), LV_PART_MAIN);
+}
+
+void OledDisplay::SetupStandbyClockUI() {
+    DisplayLockGuard lock(this);
+
+    auto screen = lv_screen_active();
+
+    standby_container_ = lv_obj_create(screen);
+    lv_obj_set_size(standby_container_, LV_HOR_RES, LV_VER_RES);
+    lv_obj_set_style_bg_opa(standby_container_, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(standby_container_, 0, 0);
+    lv_obj_set_style_radius(standby_container_, 0, 0);
+    lv_obj_set_style_pad_all(standby_container_, 0, 0);
+    lv_obj_set_scrollbar_mode(standby_container_, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_set_flex_flow(standby_container_, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(
+        standby_container_,
+        LV_FLEX_ALIGN_CENTER,
+        LV_FLEX_ALIGN_CENTER,
+        LV_FLEX_ALIGN_CENTER
+    );
+    lv_obj_set_style_pad_row(standby_container_, 4, 0);
+    lv_obj_add_flag(standby_container_, LV_OBJ_FLAG_HIDDEN);
+
+    standby_time_label_ = lv_label_create(standby_container_);
+    lv_label_set_text(standby_time_label_, "00:00");
+    lv_obj_set_width(standby_time_label_, LV_HOR_RES);
+    lv_obj_set_style_text_align(standby_time_label_, LV_TEXT_ALIGN_CENTER, 0);
+
+    standby_date_label_ = lv_label_create(standby_container_);
+    lv_label_set_text(standby_date_label_, "2026-04-02 周四");
+    lv_obj_set_width(standby_date_label_, LV_HOR_RES);
+    lv_obj_set_style_text_align(standby_date_label_, LV_TEXT_ALIGN_CENTER, 0);
+
+    if (height_ >= 64) {
+        lv_obj_set_style_text_font(standby_time_label_, &font_puhui_basic_30_4, 0);
+        lv_obj_set_style_text_font(standby_date_label_, &BUILTIN_TEXT_FONT, 0);
+    } else {
+        lv_obj_set_style_text_font(standby_time_label_, &font_puhui_basic_20_4, 0);
+        lv_obj_set_style_text_font(standby_date_label_, &BUILTIN_TEXT_FONT, 0);
+    }
 }
 
 

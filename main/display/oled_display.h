@@ -24,6 +24,9 @@ private:
     lv_obj_t* side_bar_ = nullptr;
     lv_obj_t *emotion_label_ = nullptr;
     lv_obj_t* chat_message_label_ = nullptr;
+    lv_obj_t* standby_container_ = nullptr;
+    lv_obj_t* standby_time_label_ = nullptr;
+    lv_obj_t* standby_date_label_ = nullptr;
 
     // 动画表情相关
     std::unique_ptr<RoboEyesAdapter> roboeyes_adapter_;
@@ -33,12 +36,15 @@ private:
 
     void SetupUI_128x64();
     void SetupUI_128x32();
+    void SetupStandbyClockUI();
 
 public:
     OledDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel_handle_t panel, int width, int height, bool mirror_x, bool mirror_y);
     ~OledDisplay();
 
     virtual void SetChatMessage(const char* role, const char* content) override;
+    virtual void ShowStandbyClock(bool show) override;
+    virtual void SetStandbyClock(const char* time_text, const char* date_text) override;
     virtual void SetEmotion(const char* emotion) override;
     virtual void SetTheme(Theme* theme) override;
 

@@ -18,6 +18,7 @@
 #include <driver/gpio.h>
 #include <arpa/inet.h>
 #include <font_awesome.h>
+#include <ctime>
 #include <tuple>
 
 #define TAG "Application"
@@ -48,7 +49,7 @@
 // - 将服务器下发的情绪（emotion）映射为电机动作并调度执行
 // 注：电机动作通过消息队列发送到 `MotorControlTask` 在单独任务中执行，避免阻塞主循环。
 
-// Motor control functions - only available on qebabe-xiaoche board
+// Motor control functions - only available on booboox-xiaoche board
 // These are declared as weak externs and will be resolved at link time
 extern "C" void HandleMotorActionForEmotion(const char* emotion) __attribute__((weak));
 extern "C" void (*HandleMotorActionForEmotionPtr)(const char* emotion) __attribute__((weak));
@@ -67,6 +68,10 @@ struct MotorAction {
 static std::queue<MotorAction> motor_action_queue_;
 static std::mutex motor_queue_mutex_;
 static volatile bool motor_executor_running_ = false;
+
+namespace {
+const char* kWeekdayZh[] = {"周日", "周一", "周二", "周三", "周四", "周五", "周六"};
+}
 
 // Motor control task (deprecated - now using global functions)
 
@@ -126,6 +131,37 @@ bool Application::SetDeviceState(DeviceState state) {
     return state_machine_.TransitionTo(state);
 }
 
+void Application::UpdateIdleClockDisplay() {
+    if (GetDeviceState() != kDeviceStateIdle) {
+        return;
+    }
+
+    auto display = Board::GetInstance().GetDisplay();
+    display->ShowStandbyClock(true);
+
+    time_t now = time(nullptr);
+    struct tm tm_info {};
+    localtime_r(&now, &tm_info);
+
+    if (tm_info.tm_year < (2025 - 1900)) {
+        display->SetStandbyClock("--:--", "等待校时");
+        return;
+    }
+
+    char time_buf[8];
+    char date_buf[32];
+
+    if ((tm_info.tm_sec % 2) == 0) {
+        strftime(time_buf, sizeof(time_buf), "%H:%M", &tm_info);
+    } else {
+        strftime(time_buf, sizeof(time_buf), "%H %M", &tm_info);
+    }
+    strftime(date_buf, sizeof(date_buf), "%Y-%m-%d", &tm_info);
+
+    std::string date_line = std::string(date_buf) + " " + kWeekdayZh[tm_info.tm_wday];
+    display->SetStandbyClock(time_buf, date_line.c_str());
+}
+
 void Application::Initialize() {
     auto& board = Board::GetInstance();
     SetDeviceState(kDeviceStateStarting);
@@ -133,13 +169,15 @@ void Application::Initialize() {
     // Setup the display
     auto display = board.GetDisplay();
 
-    // Print board name/version info
-    display->SetChatMessage("system", SystemInfo::GetUserAgent().c_str());
-
-    // Default to eye-only display mode on startup (enable animated emotion)
+    // Startup flow: show initialization page first, then use eye mode as
+    // the active-dialog preference once the device enters listening/speaking.
     display_mode_ = kDisplayModeEyeOnly;
-    SetDisplayMode(kDisplayModeEyeOnly);
-    ESP_LOGI("Application", "Animated emotion mode enabled by default (Eye Only)");
+    display->ShowStandbyClock(false);
+    display->SetAnimatedEmotionMode(false);
+    display->SetStatus(Lang::Strings::INITIALIZING);
+    display->SetChatMessage("system", "");
+    display->SetEmotion("neutral");
+    ESP_LOGI("Application", "Startup display prepared, standby clock will appear in idle");
 
     // Initialize 说明（中文）：
     // 该函数负责完成设备的整体初始化：
@@ -250,20 +288,7 @@ void Application::SetDisplayMode(DisplayMode mode) {
         display_mode_ = mode;
         ESP_LOGI("Application", "Display mode changed to: %s",
                  mode == kDisplayModeDefault ? "Default" : "Eye Only");
-
-        // 根据显示模式更新显示器状态
-        auto display = Board::GetInstance().GetDisplay();
-        if (mode == kDisplayModeEyeOnly) {
-            // 眼睛模式：启用动画表情，隐藏文字
-            display->SetAnimatedEmotionMode(true);
-            display->SetStatus("");  // 清空状态文字
-            display->SetChatMessage("system", "");  // 清空聊天消息
-        } else {
-            // 默认模式：根据当前状态显示相应内容
-            display->SetAnimatedEmotionMode(false);
-            // 重新设置当前状态的显示内容
-            HandleStateChangedEvent();
-        }
+        HandleStateChangedEvent();
     }
 }
 
@@ -360,6 +385,10 @@ void Application::Run() {
 
             // Update animated emotion if enabled
             display->UpdateAnimatedEmotion();
+
+            if (GetDeviceState() == kDeviceStateIdle) {
+                UpdateIdleClockDisplay();
+            }
 
             // Handle motor idle actions (only on boards that support it)
             // Use separate motor control task to avoid stability issues
@@ -1167,27 +1196,26 @@ void Application::HandleStateChangedEvent() {
     led->OnStateChanged();
     
     switch (new_state) {
+        case kDeviceStateStarting:
+            display->SetAnimatedEmotionMode(false);
+            display->ShowStandbyClock(false);
+            display->SetStatus(Lang::Strings::INITIALIZING);
+            display->SetChatMessage("system", "");
+            display->SetEmotion("neutral");
+            break;
         case kDeviceStateUnknown:
         case kDeviceStateIdle:
-            if (display_mode_ == kDisplayModeEyeOnly) {
-                // 眼睛模式：只显示动画眼睛，不显示任何文字
-                display->SetAnimatedEmotionMode(true);
-                display->SetStatus("");
-                display->SetChatMessage("system", "");
-                display->SetEmotion("neutral");
-            } else {
-                // 默认模式：显示静态表情
-                display->SetAnimatedEmotionMode(false);
-                display->SetStatus(Lang::Strings::STANDBY);
-                display->SetChatMessage("system", "");
-                display->SetEmotion("neutral");
-            }
+            display->SetAnimatedEmotionMode(false);
+            display->ShowStandbyClock(true);
+            UpdateIdleClockDisplay();
             audio_service_.EnableVoiceProcessing(false);
             audio_service_.EnableWakeWordDetection(true);
             break;
         case kDeviceStateConnecting:
+            display->SetAnimatedEmotionMode(false);
+            display->ShowStandbyClock(false);
             if (display_mode_ == kDisplayModeEyeOnly) {
-                display->SetStatus("");
+                display->SetStatus(Lang::Strings::CONNECTING);
                 display->SetChatMessage("system", "");
                 display->SetEmotion("neutral");
             } else {
@@ -1197,13 +1225,16 @@ void Application::HandleStateChangedEvent() {
             }
             break;
         case kDeviceStateListening:
+            display->ShowStandbyClock(false);
             if (display_mode_ == kDisplayModeEyeOnly) {
                 // 眼睛模式：显示专用的聆听表情
+                display->SetAnimatedEmotionMode(true);
                 display->SetStatus("");
                 display->SetChatMessage("system", "");
                 display->SetEmotion("listening");
             } else {
                 // 默认模式：显示状态文字
+                display->SetAnimatedEmotionMode(false);
                 display->SetStatus(Lang::Strings::LISTENING);
                 display->SetChatMessage("system", "");
                 display->SetEmotion("neutral");
@@ -1224,13 +1255,16 @@ void Application::HandleStateChangedEvent() {
             }
             break;
         case kDeviceStateSpeaking:
+            display->ShowStandbyClock(false);
             if (display_mode_ == kDisplayModeEyeOnly) {
                 // 眼睛模式：只显示动画眼睛
+                display->SetAnimatedEmotionMode(true);
                 display->SetStatus("");
                 display->SetChatMessage("system", "");
                 display->SetEmotion("happy");
             } else {
                 // 默认模式：显示状态文字
+                display->SetAnimatedEmotionMode(false);
                 display->SetStatus(Lang::Strings::SPEAKING);
                 display->SetChatMessage("system", "");
                 display->SetEmotion("neutral");
@@ -1246,8 +1280,17 @@ void Application::HandleStateChangedEvent() {
             audio_service_.ResetDecoder();
             break;
         case kDeviceStateWifiConfiguring:
+            display->SetAnimatedEmotionMode(false);
+            display->ShowStandbyClock(false);
             audio_service_.EnableVoiceProcessing(false);
             audio_service_.EnableWakeWordDetection(false);
+            break;
+        case kDeviceStateUpgrading:
+        case kDeviceStateActivating:
+        case kDeviceStateAudioTesting:
+        case kDeviceStateFatalError:
+            display->SetAnimatedEmotionMode(false);
+            display->ShowStandbyClock(false);
             break;
         default:
             // Do nothing

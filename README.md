@@ -1,96 +1,181 @@
-# 小智桌面机器人项目
+# booboox-xiaoche
 
-## 1. 项目介绍
+基于 `xiaozhi-esp32` 改造的桌面小车机器人项目。
 
-该桌面机器人就是在小智的基础上增加了一个电机驱动模块来控制两个轮子电机来做出一些动作。后期还会增加如激光传感器、再增加手臂舵机等其他模块。
+这个版本在小智语音交互能力的基础上，增加了双电机驱动控制，用于实现前进、后退、转向、跳舞等动作。当前仓库已经接入自定义板型 `booboox-xiaoche`，可以直接在 `ESP-IDF` 的 `menuconfig` 里选择并编译。
 
-### 欢迎加入QQ群内交流：183253687
+## 1. 功能简介
 
-![图片](https://ossbigdata.yunjiutoutiao.com/PicGo/qebabe-xiaoche1.jpg)
+- 语音唤醒与语音对话
+- 通过表情或动作指令驱动电机运动
+- 支持 OLED 显示
+- 支持独立待机页：全屏大号时间，下一行显示日期和星期
+- 唤醒后自动切换到眼睛动画界面
+- 支持 `TTP223` 触摸模块，轻触后触发电机震动反馈
+- 支持本地编译、烧录和串口监视
+- 基于 `ESP32-S3-DevKitC-1` 的 DIY 面包板方案
 
-**具体玩法：详细功能分析**
+## 2. 硬件清单
 
-## 2. 组装连线
+- 开发板：`ESP32-S3-DevKitC-1`（推荐 `WROOM N16R8`）
+- 数字麦克风：`INMP441` / `ICS43434`
+- 功放：`MAX98357A`
+- 喇叭：`8Ω 2~3W` 或 `4Ω 2~3W`
+- 屏幕：`SSD1306 128x64` 或 `SSD1306 128x32`
+- 电机驱动：迷你 `L298N` / `TC1508` 类双路驱动模块
+- 电机：N20 减速电机或其他双轮电机
+- 触摸模块：`TTP223`（可选）
+- 面包板、杜邦线、Type-C 数据线等常规配件
 
-### 2.1 DIY 所需硬件
+## 3. 关键引脚
 
-- **开发板**：ESP32-S3-DevKitC-1（选择 WROOM N16R8 模组）
-- **数字麦克风**：INMP441 / ICS43434
-- **功放**：MAX98357A
-- **腔体喇叭**：8Ω 2~3W 或 4Ω 2~3W
-- **导线**：跳线一盒，杜邦线若干
-- **400 孔面包板**：2 块
-- **128x64 I2C(IIC) 液晶显示屏**：SSD1306 驱动（推荐）
-- **6*6mm 立式 轻触开关**（可选）
+### 3.1 电机控制引脚
 
-除此之外，你可能还需要用到万用表，电烙铁套件，钳子三件套，Type-C数据线，用于烧录固件的PC。
+- `GPIO12`：左轮前进
+- `GPIO13`：左轮后退
+- `GPIO14`：右轮前进
+- `GPIO21`：右轮后退
 
-### 2.2 小智部分
+### 3.2 OLED 引脚
 
-更详细组装文档请查看：[小智AI聊天机器人面包板DIY硬件清单与接线教程](https://xiaoche.ytqhz.com/)
+- `GPIO41`：SDA
+- `GPIO42`：SCL
 
-在小智面包板的基础上增加：`GPIO12`、`GPIO13`、`GPIO14`、`GPIO21` 这四个接口连接电机驱动模块（迷你L298N）
+### 3.3 TTP223 触摸模块引脚
 
-**接线对照表：**
-![接线对照表图片](https://ossbigdata.yunjiutoutiao.com/PicGo/1280X1280.PNG)
+- `GPIO2`：TTP223 输出引脚 `OUT`
+- `3.3V`：TTP223 `VCC`
+- `GND`：TTP223 `GND`
 
-## 3. 固件烧录
+轻触一次 `TTP223`，机器人会执行一小段前后抖动序列，用电机动作模拟“震动”反馈。
 
-### 3.1 在线固件烧录
+### 3.4 音频引脚
 
-**Web在线烧录**：专门写了一个可以在线烧录的页面，免去了下载固件和用本地的烧录工具烧录。
+- 麦克风 WS：`GPIO4`
+- 麦克风 SCK：`GPIO5`
+- 麦克风 DIN：`GPIO6`
+- 喇叭 DOUT：`GPIO7`
+- 喇叭 BCLK：`GPIO15`
+- 喇叭 LRCK：`GPIO16`
 
-🔗 [在线烧录地址](https://xiaoche.ytqhz.com/)
+对应定义见 [config.h](main/boards/booboox-xiaoche/config.h)。
 
-### 3.2 本地固件烧录
+## 4. 显示逻辑
 
-#### 测试固件 V0.6
+### 4.1 待机页
 
-- **更新内容**：优化动作、网页端新增动作控制按钮
+设备初始化完成并进入待机后，屏幕会显示独立待机页：
 
-#### 测试固件 V0.5
+- 中间显示大号时间
+- 下一行显示日期和星期
+- 时间中的 `:` 会每秒闪烁一次
 
-- **更新内容**：
-  - 优化唤醒动作
-  - 全面实现 PWM 控制
+如果设备尚未联网校时，待机页会先显示：
 
-#### 版本更新说明 🔧 电机动作系统修复
+- `--:--`
+- `等待校时`
 
-##### 1. 表情动作映射完善
+### 4.2 对话页
 
-- 扩展 `TriggerMotorEmotion` 函数，支持所有 motor_cmd (1-6) 的完整映射
-- 添加 5 个新的独特表情动作：`OnExcited`、`OnLoving`、`OnAngry`、`OnSurprised`、`OnConfused`
-- 调整表情映射，实现表情与动作一一对应，避免多个表情共用同一动作
+当设备被唤醒时：
 
-##### 2. 跳舞动作升级
+- 语音唤醒词触发后进入对话
+- 或者启动完成后按下 `BOOT` 按钮进入对话
 
-- 重写 `MotorDance` 方法，实现完整的 8 步舞蹈序列
-- 从简单的单一动作升级为：前进→左转→右转→后退→前进→左转→右转→结束的丰富舞蹈
+屏幕会从待机页切换为眼睛动画界面：
 
-##### 3. 表情动作优化
+- `Listening` 状态显示 listening 眼睛
+- `Speaking` 状态显示 happy 眼睛
+- 对话结束后返回待机时钟页
 
-- **excited**：快速三连动（前进→左转→右转）
-- **loving**：温柔双连动（前进→轻柔左转）
-- **angry**：强烈冲突动（后退→前冲）
-- **surprised**：突然反应动（快速后退→前进）
-- **confused**：犹豫多段动（反复左右转）
+## 5. 编译方法
 
-现在每个表情都有独特的电机动作表现，跳舞命令也能执行完整的舞蹈序列了！ 🎉
+### 5.1 进入 ESP-IDF 环境
 
-#### 测试固件 V0.4
+如果你的 Mac 上和当前环境一致，可以这样进入：
 
-- **更新内容**：
-  - 修复不能唤醒
-  - 增加控制小车网页，系统初始化后直接访问板子的IP地址即可打开控制界面
+```bash
+export PATH=/Library/Frameworks/Python.framework/Versions/3.11/bin:$PATH
+source ~/.espressif/v5.5/esp-idf/export.sh
+cd /path/to/xiaozhi-esp32
+```
 
-#### 测试固件 V0.3
+### 5.2 使用 menuconfig 编译
 
-- **更新内容**：修改了电机引脚为 GPIO12、GPIO13、GPIO14、GPIO21
+```bash
+idf.py set-target esp32s3
+idf.py fullclean
+idf.py menuconfig
+```
 
-**备用方法（本地烧录）**：Flash工具/Web端烧录固件（无IDF开发环境）
+在菜单中选择：
 
-## 4. 开源地址
+- `Xiaozhi Assistant -> Board Type -> Booboox Xiaoche`
+- `Xiaozhi Assistant -> OLED Type -> SSD1306 128*64`
 
-🔗 [GitHub 仓库](https://github.com/qebabe/xiaozhi-esp32)
+如果你使用的是小屏，也可以选择：
 
----
+- `Xiaozhi Assistant -> OLED Type -> SSD1306 128*32`
+
+然后执行：
+
+```bash
+idf.py build
+```
+
+### 5.3 使用脚本快速编译
+
+`128x64` OLED:
+
+```bash
+python3 scripts/release.py booboox-xiaoche --name booboox-xiaoche-128x64
+```
+
+`128x32` OLED:
+
+```bash
+python3 scripts/release.py booboox-xiaoche --name booboox-xiaoche
+```
+
+## 6. 烧录方法
+
+先查看串口：
+
+```bash
+ls /dev/cu.*
+```
+
+然后烧录并打开串口监视：
+
+```bash
+idf.py -p /dev/cu.usbmodemXXXX flash monitor
+```
+
+如果只烧录不打开监视：
+
+```bash
+idf.py -p /dev/cu.usbmodemXXXX flash
+```
+
+## 7. 生成文件
+
+编译完成后常用文件位置：
+
+- 应用固件：`build/xiaozhi.bin`
+- 合并固件：`build/merged-binary.bin`
+- 打包固件：`releases/`
+
+## 8. 板型说明
+
+当前自定义板型目录：
+
+- [main/boards/booboox-xiaoche](main/boards/booboox-xiaoche)
+
+板型配置入口：
+
+- [main/Kconfig.projbuild](main/Kconfig.projbuild)
+- [main/CMakeLists.txt](main/CMakeLists.txt)
+
+## 9. 说明
+
+这个仓库基于小智项目衍生，当前重点是双轮小车形态的本地开发和实验。如果后续增加激光传感器、机械臂、网页控制面板或更多 MCP 控制能力，可以继续在 `booboox-xiaoche` 板型上扩展。

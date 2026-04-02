@@ -55,6 +55,16 @@ void Display::SetPowerSaveMode(bool on) {
     ESP_LOGW(TAG, "SetPowerSaveMode: %d", on);
 }
 
+void Display::ShowStandbyClock(bool show) {
+    ESP_LOGD(TAG, "ShowStandbyClock: %d", show);
+}
+
+void Display::SetStandbyClock(const char* time_text, const char* date_text) {
+    ESP_LOGD(TAG, "SetStandbyClock time=%s date=%s",
+             time_text ? time_text : "",
+             date_text ? date_text : "");
+}
+
 void Display::SetAnimatedEmotionMode(bool enable) {
     animated_emotion_mode_ = enable;
     ESP_LOGI(TAG, "Animated emotion mode: %s", enable ? "enabled" : "disabled");

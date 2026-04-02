@@ -77,6 +77,7 @@ public:
     DisplayMode GetDisplayMode() const { return display_mode_; }
     void SetDisplayMode(DisplayMode mode);
     void ToggleDisplayMode();
+    void UpdateIdleClockDisplay();
     
     /**
      * Request state transition

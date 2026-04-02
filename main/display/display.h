@@ -39,6 +39,8 @@ public:
     virtual Theme* GetTheme() { return current_theme_; }
     virtual void UpdateStatusBar(bool update_all = false);
     virtual void SetPowerSaveMode(bool on);
+    virtual void ShowStandbyClock(bool show);
+    virtual void SetStandbyClock(const char* time_text, const char* date_text);
 
     // 动画表情相关方法
     virtual void SetAnimatedEmotionMode(bool enable);

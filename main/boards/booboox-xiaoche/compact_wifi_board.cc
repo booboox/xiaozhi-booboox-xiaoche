@@ -42,6 +42,16 @@ private:
     Button touch_button_;
     Button volume_up_button_;
     Button volume_down_button_;
+    Button ttp223_touch_button_;
+
+    void TriggerTouchVibration() {
+        auto& app = Application::GetInstance();
+        // Queue a short forward/backward sequence to simulate a vibration pulse.
+        app.QueueMotorAction(4, 55, 70, "TTP223 vibration forward 1");
+        app.QueueMotorAction(2, 55, 70, "TTP223 vibration backward 1");
+        app.QueueMotorAction(4, 45, 60, "TTP223 vibration forward 2");
+        app.QueueMotorAction(2, 45, 60, "TTP223 vibration backward 2");
+    }
 
     void InitializeDisplayI2c() {
         i2c_master_bus_config_t bus_config = {
@@ -157,6 +167,11 @@ private:
         volume_down_button_.OnLongPress([this]() {
             GetAudioCodec()->SetOutputVolume(0);
             GetDisplay()->ShowNotification(Lang::Strings::MUTED);
+        });
+
+        ttp223_touch_button_.OnClick([this]() {
+            ESP_LOGI(TAG, "TTP223 touched, trigger vibration feedback");
+            TriggerTouchVibration();
         });
     }
 
@@ -522,7 +537,8 @@ public:
         boot_button_(BOOT_BUTTON_GPIO),
         touch_button_(TOUCH_BUTTON_GPIO),
         volume_up_button_(VOLUME_UP_BUTTON_GPIO),
-        volume_down_button_(VOLUME_DOWN_BUTTON_GPIO) {
+        volume_down_button_(VOLUME_DOWN_BUTTON_GPIO),
+        ttp223_touch_button_(TTP223_TOUCH_GPIO, true) {
         InitializeDisplayI2c();
         InitializeSsd1306Display();
         InitializeButtons();
