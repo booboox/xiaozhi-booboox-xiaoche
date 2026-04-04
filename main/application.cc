@@ -70,7 +70,7 @@ static std::mutex motor_queue_mutex_;
 static volatile bool motor_executor_running_ = false;
 
 namespace {
-const char* kWeekdayZh[] = {"周日", "周一", "周二", "周三", "周四", "周五", "周六"};
+const char* kWeekdayEn[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
 }
 
 // Motor control task (deprecated - now using global functions)
@@ -158,7 +158,7 @@ void Application::UpdateIdleClockDisplay() {
     }
     strftime(date_buf, sizeof(date_buf), "%Y-%m-%d", &tm_info);
 
-    std::string date_line = std::string(date_buf) + " " + kWeekdayZh[tm_info.tm_wday];
+    std::string date_line = std::string(date_buf) + " " + kWeekdayEn[tm_info.tm_wday];
     display->SetStandbyClock(time_buf, date_line.c_str());
 }
 
@@ -176,7 +176,7 @@ void Application::Initialize() {
     display->SetAnimatedEmotionMode(false);
     display->SetStatus(Lang::Strings::INITIALIZING);
     display->SetChatMessage("system", "");
-    display->SetEmotion("neutral");
+    display->SetEmotion("microchip_ai");
     ESP_LOGI("Application", "Startup display prepared, standby clock will appear in idle");
 
     // Initialize 说明（中文）：
@@ -1015,7 +1015,7 @@ void Application::DismissAlert() {
     if (GetDeviceState() == kDeviceStateIdle) {
         auto display = Board::GetInstance().GetDisplay();
         display->SetStatus(Lang::Strings::STANDBY);
-        display->SetEmotion("neutral");
+        display->SetEmotion("microchip_ai");
         display->SetChatMessage("system", "");
     }
 }
@@ -1201,7 +1201,7 @@ void Application::HandleStateChangedEvent() {
             display->ShowStandbyClock(false);
             display->SetStatus(Lang::Strings::INITIALIZING);
             display->SetChatMessage("system", "");
-            display->SetEmotion("neutral");
+            display->SetEmotion("microchip_ai");
             break;
         case kDeviceStateUnknown:
         case kDeviceStateIdle:
@@ -1217,7 +1217,7 @@ void Application::HandleStateChangedEvent() {
             if (display_mode_ == kDisplayModeEyeOnly) {
                 display->SetStatus(Lang::Strings::CONNECTING);
                 display->SetChatMessage("system", "");
-                display->SetEmotion("neutral");
+                display->SetEmotion("microchip_ai");
             } else {
                 display->SetStatus(Lang::Strings::CONNECTING);
                 display->SetEmotion("neutral");

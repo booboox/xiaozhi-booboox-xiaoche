@@ -165,6 +165,12 @@ void RoboEyesAdapter::RoboEyesTimerCallback(lv_timer_t* timer) {
 RoboEyesAdapter::RoboEyesAdapter() {}
 
 RoboEyesAdapter::~RoboEyesAdapter() {
+    // Stop all background update paths before freeing any display buffers.
+    // Otherwise the panel task/timer may still call Update()/DrawFrame()
+    // and touch freed memory, causing intermittent crashes/reboots.
+    initialized_ = false;
+    StopTimer();
+
     if (canvas_ != nullptr) {
         lv_obj_del(canvas_);
         canvas_ = nullptr;
@@ -180,12 +186,6 @@ RoboEyesAdapter::~RoboEyesAdapter() {
     if (indexed_buffer_ != nullptr) {
         delete[] indexed_buffer_;
         indexed_buffer_ = nullptr;
-    }
-    // stop any panel timer
-    if (panel_timer_ != nullptr) {
-        esp_timer_stop(panel_timer_);
-        esp_timer_delete(panel_timer_);
-        panel_timer_ = nullptr;
     }
     // delete RoboEyes instance and shim if created
     if (eyes_obj_) {

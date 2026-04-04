@@ -441,18 +441,20 @@ void OledDisplay::SetupStandbyClockUI() {
         LV_FLEX_ALIGN_CENTER,
         LV_FLEX_ALIGN_CENTER
     );
-    lv_obj_set_style_pad_row(standby_container_, 4, 0);
+    lv_obj_set_style_pad_row(standby_container_, 2, 0);
     lv_obj_add_flag(standby_container_, LV_OBJ_FLAG_HIDDEN);
 
     standby_time_label_ = lv_label_create(standby_container_);
     lv_label_set_text(standby_time_label_, "00:00");
     lv_obj_set_width(standby_time_label_, LV_HOR_RES);
     lv_obj_set_style_text_align(standby_time_label_, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_pad_bottom(standby_time_label_, 0, 0);
 
     standby_date_label_ = lv_label_create(standby_container_);
     lv_label_set_text(standby_date_label_, "2026-04-02 周四");
     lv_obj_set_width(standby_date_label_, LV_HOR_RES);
     lv_obj_set_style_text_align(standby_date_label_, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_pad_top(standby_date_label_, 0, 0);
 
     if (height_ >= 64) {
         lv_obj_set_style_text_font(standby_time_label_, &font_puhui_basic_30_4, 0);
@@ -503,6 +505,11 @@ void OledDisplay::SetAnimatedEmotionMode(bool enable) {
         }
     } else {
         ESP_LOGI(TAG, "Disabling animated emotion mode");
+        // Fully destroy RoboEyes so its background task stops flushing frames
+        // to the panel while LVGL is rendering the standby clock page.
+        if (roboeyes_adapter_ != nullptr) {
+            roboeyes_adapter_.reset();
+        }
         // Resume LVGL if we previously stopped it for direct panel updates
         if (panel_ != nullptr) {
             ESP_LOGI(TAG, "Resuming LVGL port after direct panel updates");
