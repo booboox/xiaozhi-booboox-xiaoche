@@ -27,6 +27,10 @@ private:
     lv_obj_t* standby_container_ = nullptr;
     lv_obj_t* standby_time_label_ = nullptr;
     lv_obj_t* standby_date_label_ = nullptr;
+    lv_obj_t* pomodoro_container_ = nullptr;
+    lv_obj_t* pomodoro_time_label_ = nullptr;
+    lv_obj_t* pomodoro_phase_label_ = nullptr;
+    lv_obj_t* pomodoro_status_label_ = nullptr;
 
     // 动画表情相关
     std::unique_ptr<RoboEyesAdapter> roboeyes_adapter_;
@@ -37,6 +41,7 @@ private:
     void SetupUI_128x64();
     void SetupUI_128x32();
     void SetupStandbyClockUI();
+    void SetupPomodoroUI();
 
 public:
     OledDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel_handle_t panel, int width, int height, bool mirror_x, bool mirror_y);
@@ -45,6 +50,8 @@ public:
     virtual void SetChatMessage(const char* role, const char* content) override;
     virtual void ShowStandbyClock(bool show) override;
     virtual void SetStandbyClock(const char* time_text, const char* date_text) override;
+    virtual void ShowPomodoroTimer(bool show) override;
+    virtual void SetPomodoroTimer(const char* time_text, const char* phase_text, const char* status_text) override;
     virtual void SetEmotion(const char* emotion) override;
     virtual void SetTheme(Theme* theme) override;
 

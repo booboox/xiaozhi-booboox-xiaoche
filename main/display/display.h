@@ -41,6 +41,8 @@ public:
     virtual void SetPowerSaveMode(bool on);
     virtual void ShowStandbyClock(bool show);
     virtual void SetStandbyClock(const char* time_text, const char* date_text);
+    virtual void ShowPomodoroTimer(bool show);
+    virtual void SetPomodoroTimer(const char* time_text, const char* phase_text, const char* status_text);
 
     // 动画表情相关方法
     virtual void SetAnimatedEmotionMode(bool enable);

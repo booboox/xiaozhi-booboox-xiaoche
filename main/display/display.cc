@@ -65,6 +65,17 @@ void Display::SetStandbyClock(const char* time_text, const char* date_text) {
              date_text ? date_text : "");
 }
 
+void Display::ShowPomodoroTimer(bool show) {
+    ESP_LOGD(TAG, "ShowPomodoroTimer: %d", show);
+}
+
+void Display::SetPomodoroTimer(const char* time_text, const char* phase_text, const char* status_text) {
+    ESP_LOGD(TAG, "SetPomodoroTimer time=%s phase=%s status=%s",
+             time_text ? time_text : "",
+             phase_text ? phase_text : "",
+             status_text ? status_text : "");
+}
+
 void Display::SetAnimatedEmotionMode(bool enable) {
     animated_emotion_mode_ = enable;
     ESP_LOGI(TAG, "Animated emotion mode: %s", enable ? "enabled" : "disabled");

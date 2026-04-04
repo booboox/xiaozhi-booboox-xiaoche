@@ -85,6 +85,7 @@ OledDisplay::OledDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel_handl
     }
 
     SetupStandbyClockUI();
+    SetupPomodoroUI();
 }
 
 OledDisplay::~OledDisplay() {
@@ -121,6 +122,12 @@ OledDisplay::~OledDisplay() {
         standby_time_label_ = nullptr;
         standby_date_label_ = nullptr;
         lv_obj_del(standby_container_);
+    }
+    if (pomodoro_container_ != nullptr) {
+        pomodoro_time_label_ = nullptr;
+        pomodoro_phase_label_ = nullptr;
+        pomodoro_status_label_ = nullptr;
+        lv_obj_del(pomodoro_container_);
     }
 
     if (panel_ != nullptr) {
@@ -172,6 +179,9 @@ void OledDisplay::ShowStandbyClock(bool show) {
     }
 
     if (show) {
+        if (pomodoro_container_ != nullptr) {
+            lv_obj_add_flag(pomodoro_container_, LV_OBJ_FLAG_HIDDEN);
+        }
         if (container_ != nullptr) {
             lv_obj_add_flag(container_, LV_OBJ_FLAG_HIDDEN);
         }
@@ -201,6 +211,49 @@ void OledDisplay::SetStandbyClock(const char* time_text, const char* date_text) 
 
     lv_label_set_text(standby_time_label_, time_text ? time_text : "");
     lv_label_set_text(standby_date_label_, date_text ? date_text : "");
+}
+
+void OledDisplay::ShowPomodoroTimer(bool show) {
+    DisplayLockGuard lock(this);
+
+    if (pomodoro_container_ == nullptr) {
+        return;
+    }
+
+    if (show) {
+        if (standby_container_ != nullptr) {
+            lv_obj_add_flag(standby_container_, LV_OBJ_FLAG_HIDDEN);
+        }
+        if (container_ != nullptr) {
+            lv_obj_add_flag(container_, LV_OBJ_FLAG_HIDDEN);
+        }
+        if (status_bar_ != nullptr && height_ >= 64) {
+            lv_obj_add_flag(status_bar_, LV_OBJ_FLAG_HIDDEN);
+        }
+        lv_obj_remove_flag(pomodoro_container_, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_move_foreground(pomodoro_container_);
+    } else {
+        lv_obj_add_flag(pomodoro_container_, LV_OBJ_FLAG_HIDDEN);
+
+        if (container_ != nullptr) {
+            lv_obj_remove_flag(container_, LV_OBJ_FLAG_HIDDEN);
+        }
+        if (status_bar_ != nullptr && height_ >= 64) {
+            lv_obj_remove_flag(status_bar_, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+}
+
+void OledDisplay::SetPomodoroTimer(const char* time_text, const char* phase_text, const char* status_text) {
+    DisplayLockGuard lock(this);
+
+    if (pomodoro_time_label_ == nullptr || pomodoro_phase_label_ == nullptr || pomodoro_status_label_ == nullptr) {
+        return;
+    }
+
+    lv_label_set_text(pomodoro_time_label_, time_text ? time_text : "");
+    lv_label_set_text(pomodoro_phase_label_, phase_text ? phase_text : "");
+    lv_label_set_text(pomodoro_status_label_, status_text ? status_text : "");
 }
 
 void OledDisplay::SetupUI_128x64() {
@@ -462,6 +515,58 @@ void OledDisplay::SetupStandbyClockUI() {
     } else {
         lv_obj_set_style_text_font(standby_time_label_, &font_puhui_basic_20_4, 0);
         lv_obj_set_style_text_font(standby_date_label_, &BUILTIN_TEXT_FONT, 0);
+    }
+}
+
+void OledDisplay::SetupPomodoroUI() {
+    DisplayLockGuard lock(this);
+
+    auto screen = lv_screen_active();
+
+    pomodoro_container_ = lv_obj_create(screen);
+    lv_obj_set_size(pomodoro_container_, LV_HOR_RES, LV_VER_RES);
+    lv_obj_set_style_bg_opa(pomodoro_container_, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(pomodoro_container_, 0, 0);
+    lv_obj_set_style_radius(pomodoro_container_, 0, 0);
+    lv_obj_set_style_pad_all(pomodoro_container_, 0, 0);
+    lv_obj_set_scrollbar_mode(pomodoro_container_, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_set_flex_flow(pomodoro_container_, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(
+        pomodoro_container_,
+        LV_FLEX_ALIGN_CENTER,
+        LV_FLEX_ALIGN_CENTER,
+        LV_FLEX_ALIGN_CENTER
+    );
+    lv_obj_set_style_pad_row(pomodoro_container_, 0, 0);
+    lv_obj_add_flag(pomodoro_container_, LV_OBJ_FLAG_HIDDEN);
+
+    pomodoro_time_label_ = lv_label_create(pomodoro_container_);
+    lv_label_set_text(pomodoro_time_label_, "25:00");
+    lv_obj_set_width(pomodoro_time_label_, LV_HOR_RES);
+    lv_obj_set_style_text_align(pomodoro_time_label_, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_pad_bottom(pomodoro_time_label_, 0, 0);
+
+    pomodoro_phase_label_ = lv_label_create(pomodoro_container_);
+    lv_label_set_text(pomodoro_phase_label_, "FOCUS");
+    lv_obj_set_width(pomodoro_phase_label_, LV_HOR_RES);
+    lv_obj_set_style_text_align(pomodoro_phase_label_, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_pad_top(pomodoro_phase_label_, 0, 0);
+    lv_obj_set_style_pad_bottom(pomodoro_phase_label_, 0, 0);
+
+    pomodoro_status_label_ = lv_label_create(pomodoro_container_);
+    lv_label_set_text(pomodoro_status_label_, "Running");
+    lv_obj_set_width(pomodoro_status_label_, LV_HOR_RES);
+    lv_obj_set_style_text_align(pomodoro_status_label_, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_pad_top(pomodoro_status_label_, 0, 0);
+
+    if (height_ >= 64) {
+        lv_obj_set_style_text_font(pomodoro_time_label_, &font_puhui_basic_20_4, 0);
+        lv_obj_set_style_text_font(pomodoro_phase_label_, &BUILTIN_TEXT_FONT, 0);
+        lv_obj_set_style_text_font(pomodoro_status_label_, &BUILTIN_TEXT_FONT, 0);
+    } else {
+        lv_obj_set_style_text_font(pomodoro_time_label_, &font_puhui_basic_20_4, 0);
+        lv_obj_set_style_text_font(pomodoro_phase_label_, &BUILTIN_TEXT_FONT, 0);
+        lv_obj_set_style_text_font(pomodoro_status_label_, &BUILTIN_TEXT_FONT, 0);
     }
 }
 

@@ -162,6 +162,121 @@ void Application::UpdateIdleClockDisplay() {
     display->SetStandbyClock(time_buf, date_line.c_str());
 }
 
+void Application::UpdatePomodoroDisplay() {
+    if (!pomodoro_timer_.IsActive()) {
+        return;
+    }
+
+    auto display = Board::GetInstance().GetDisplay();
+    display->ShowPomodoroTimer(true);
+    auto time_text = pomodoro_timer_.GetRemainingTimeText();
+    display->SetPomodoroTimer(time_text.c_str(),
+                              pomodoro_timer_.GetPhaseText(),
+                              pomodoro_timer_.GetStatusText());
+}
+
+void Application::NotifyPomodoroStateChange(PomodoroTimer::TickEvent event) {
+    auto display = Board::GetInstance().GetDisplay();
+
+    if (event == PomodoroTimer::TickEvent::kFocusCompleted) {
+        audio_service_.PlaySound(Lang::Sounds::OGG_SUCCESS);
+        QueueMotorAction(4, 45, 120, "Pomodoro focus done forward 1");
+        QueueMotorAction(2, 45, 120, "Pomodoro focus done backward 1");
+        QueueMotorAction(4, 45, 120, "Pomodoro focus done forward 2");
+        QueueMotorAction(2, 45, 120, "Pomodoro focus done backward 2");
+        display->ShowNotification("专注结束，开始休息", 2500);
+        UpdatePomodoroDisplay();
+        return;
+    }
+
+    if (event == PomodoroTimer::TickEvent::kBreakCompleted) {
+        audio_service_.PlaySound(Lang::Sounds::OGG_POPUP);
+        QueueMotorAction(4, 50, 100, "Pomodoro break done forward 1");
+        QueueMotorAction(2, 50, 100, "Pomodoro break done backward 1");
+        QueueMotorAction(4, 50, 100, "Pomodoro break done forward 2");
+        QueueMotorAction(2, 50, 100, "Pomodoro break done backward 2");
+        QueueMotorAction(4, 50, 100, "Pomodoro break done forward 3");
+        QueueMotorAction(2, 50, 100, "Pomodoro break done backward 3");
+        display->ShowPomodoroTimer(false);
+        display->ShowNotification("休息结束，可开始下一轮", 2500);
+    }
+}
+
+bool Application::HandlePomodoroVoiceCommand(const std::string& message) {
+    auto display = Board::GetInstance().GetDisplay();
+
+    auto contains_any = [&message](std::initializer_list<const char*> keywords) {
+        for (const char* keyword : keywords) {
+            if (message.find(keyword) != std::string::npos) {
+                return true;
+            }
+        }
+        return false;
+    };
+
+    bool is_pomodoro_target =
+        contains_any({"番茄钟", "番茄中", "番钟", "专注钟", "专注中"}) ||
+        contains_any({"剩余时间"});
+
+    auto finish_local_command = [this]() {
+        if (protocol_) {
+            protocol_->CloseAudioChannel();
+        }
+        SetDeviceState(kDeviceStateIdle);
+    };
+
+    if (is_pomodoro_target && contains_any({"开始", "启动", "打开"})) {
+        pomodoro_timer_.Start();
+        finish_local_command();
+        UpdatePomodoroDisplay();
+        audio_service_.PlaySound(Lang::Sounds::OGG_POPUP);
+        display->ShowNotification("番茄钟已开始", 1500);
+        return true;
+    }
+
+    if (is_pomodoro_target && contains_any({"暂停", "停一下", "停一停"})) {
+        if (pomodoro_timer_.Pause()) {
+            finish_local_command();
+            UpdatePomodoroDisplay();
+            display->ShowNotification("番茄钟已暂停", 1500);
+            return true;
+        }
+    }
+
+    if (is_pomodoro_target && contains_any({"继续", "恢复", "接着"})) {
+        if (pomodoro_timer_.Resume()) {
+            finish_local_command();
+            UpdatePomodoroDisplay();
+            display->ShowNotification("番茄钟已继续", 1500);
+            return true;
+        }
+    }
+
+    if (is_pomodoro_target && contains_any({"取消", "结束", "关闭", "停止"})) {
+        if (pomodoro_timer_.Cancel()) {
+            finish_local_command();
+            display->ShowPomodoroTimer(false);
+            UpdateIdleClockDisplay();
+            display->ShowNotification("番茄钟已取消", 1500);
+            return true;
+        }
+    }
+
+    if ((is_pomodoro_target && contains_any({"还剩多久", "还剩多少", "多久结束", "剩多少"})) ||
+        contains_any({"剩余时间"})) {
+        if (pomodoro_timer_.IsActive()) {
+            finish_local_command();
+            UpdatePomodoroDisplay();
+            std::string notify = std::string(pomodoro_timer_.GetPhaseText()) + " " +
+                                 pomodoro_timer_.GetRemainingTimeText();
+            display->ShowNotification(notify.c_str(), 2000);
+            return true;
+        }
+    }
+
+    return false;
+}
+
 void Application::Initialize() {
     auto& board = Board::GetInstance();
     SetDeviceState(kDeviceStateStarting);
@@ -387,7 +502,15 @@ void Application::Run() {
             display->UpdateAnimatedEmotion();
 
             if (GetDeviceState() == kDeviceStateIdle) {
-                UpdateIdleClockDisplay();
+                if (pomodoro_timer_.IsActive()) {
+                    auto event = pomodoro_timer_.Tick();
+                    UpdatePomodoroDisplay();
+                    if (event != PomodoroTimer::TickEvent::kNone) {
+                        NotifyPomodoroStateChange(event);
+                    }
+                } else {
+                    UpdateIdleClockDisplay();
+                }
             }
 
             // Handle motor idle actions (only on boards that support it)
@@ -791,7 +914,20 @@ void Application::InitializeProtocol() {
                     });
                 }
 
-                Schedule([this, display, message, is_command = is_display_mode_command]() {
+                bool is_pomodoro_command = false;
+                if (message.find("番茄钟") != std::string::npos ||
+                    message.find("番茄中") != std::string::npos ||
+                    message.find("番钟") != std::string::npos ||
+                    message.find("专注钟") != std::string::npos ||
+                    message.find("专注中") != std::string::npos ||
+                    message.find("剩余时间") != std::string::npos) {
+                    is_pomodoro_command = true;
+                    Schedule([this, message]() {
+                        HandlePomodoroVoiceCommand(message);
+                    });
+                }
+
+                Schedule([this, display, message, is_command = (is_display_mode_command || is_pomodoro_command)]() {
                     // 在眼睛模式或命令模式下不显示聊天消息
                     if (display_mode_ != kDisplayModeEyeOnly && !is_command) {
                         display->SetChatMessage("user", message.c_str());
@@ -1206,14 +1342,21 @@ void Application::HandleStateChangedEvent() {
         case kDeviceStateUnknown:
         case kDeviceStateIdle:
             display->SetAnimatedEmotionMode(false);
-            display->ShowStandbyClock(true);
-            UpdateIdleClockDisplay();
+            if (pomodoro_timer_.IsActive()) {
+                display->ShowStandbyClock(false);
+                UpdatePomodoroDisplay();
+            } else {
+                display->ShowPomodoroTimer(false);
+                display->ShowStandbyClock(true);
+                UpdateIdleClockDisplay();
+            }
             audio_service_.EnableVoiceProcessing(false);
             audio_service_.EnableWakeWordDetection(true);
             break;
         case kDeviceStateConnecting:
             display->SetAnimatedEmotionMode(false);
             display->ShowStandbyClock(false);
+            display->ShowPomodoroTimer(false);
             if (display_mode_ == kDisplayModeEyeOnly) {
                 display->SetStatus(Lang::Strings::CONNECTING);
                 display->SetChatMessage("system", "");
@@ -1226,6 +1369,7 @@ void Application::HandleStateChangedEvent() {
             break;
         case kDeviceStateListening:
             display->ShowStandbyClock(false);
+            display->ShowPomodoroTimer(false);
             if (display_mode_ == kDisplayModeEyeOnly) {
                 // 眼睛模式：显示专用的聆听表情
                 display->SetAnimatedEmotionMode(true);
@@ -1256,6 +1400,7 @@ void Application::HandleStateChangedEvent() {
             break;
         case kDeviceStateSpeaking:
             display->ShowStandbyClock(false);
+            display->ShowPomodoroTimer(false);
             if (display_mode_ == kDisplayModeEyeOnly) {
                 // 眼睛模式：只显示动画眼睛
                 display->SetAnimatedEmotionMode(true);
@@ -1282,6 +1427,7 @@ void Application::HandleStateChangedEvent() {
         case kDeviceStateWifiConfiguring:
             display->SetAnimatedEmotionMode(false);
             display->ShowStandbyClock(false);
+            display->ShowPomodoroTimer(false);
             audio_service_.EnableVoiceProcessing(false);
             audio_service_.EnableWakeWordDetection(false);
             break;
@@ -1291,6 +1437,7 @@ void Application::HandleStateChangedEvent() {
         case kDeviceStateFatalError:
             display->SetAnimatedEmotionMode(false);
             display->ShowStandbyClock(false);
+            display->ShowPomodoroTimer(false);
             break;
         default:
             // Do nothing

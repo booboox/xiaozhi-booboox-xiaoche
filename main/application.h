@@ -16,6 +16,7 @@
 #include "audio_service.h"
 #include "device_state.h"
 #include "device_state_machine.h"
+#include "pomodoro_timer.h"
 #include <atomic>
 #include "web_server/web_server.h"
 
@@ -78,6 +79,9 @@ public:
     void SetDisplayMode(DisplayMode mode);
     void ToggleDisplayMode();
     void UpdateIdleClockDisplay();
+    void UpdatePomodoroDisplay();
+    void NotifyPomodoroStateChange(PomodoroTimer::TickEvent event);
+    bool HandlePomodoroVoiceCommand(const std::string& message);
     
     /**
      * Request state transition
@@ -177,6 +181,7 @@ private:
     std::string last_error_message_;
     AudioService audio_service_;
     std::unique_ptr<Ota> ota_;
+    PomodoroTimer pomodoro_timer_;
 
     bool has_server_time_ = false;
     bool aborted_ = false;
