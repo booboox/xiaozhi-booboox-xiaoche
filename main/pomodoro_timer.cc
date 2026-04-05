@@ -2,9 +2,20 @@
 
 #include <cstdio>
 
+void PomodoroTimer::SetDurations(int focus_minutes, int break_minutes) {
+    if (focus_minutes < 1) {
+        focus_minutes = 1;
+    }
+    if (break_minutes < 1) {
+        break_minutes = 1;
+    }
+    focus_duration_seconds_ = focus_minutes * 60;
+    break_duration_seconds_ = break_minutes * 60;
+}
+
 void PomodoroTimer::Start() {
     state_ = State::kFocusRunning;
-    remaining_seconds_ = kFocusDurationSeconds;
+    remaining_seconds_ = focus_duration_seconds_;
 }
 
 bool PomodoroTimer::Pause() {
@@ -55,7 +66,7 @@ PomodoroTimer::TickEvent PomodoroTimer::Tick() {
 
     if (state_ == State::kFocusRunning) {
         state_ = State::kBreakRunning;
-        remaining_seconds_ = kBreakDurationSeconds;
+        remaining_seconds_ = break_duration_seconds_;
         return TickEvent::kFocusCompleted;
     }
 

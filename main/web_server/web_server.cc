@@ -112,6 +112,14 @@ bool WebServer::Start(int port) {
     };
     httpd_register_uri_handler(server_handle_, &api_config_post_uri);
 
+    httpd_uri_t api_pomodoro_control_uri = {
+        .uri       = "/api/pomodoro/control",
+        .method    = HTTP_POST,
+        .handler   = api_pomodoro_control_handler,
+        .user_ctx  = this
+    };
+    httpd_register_uri_handler(server_handle_, &api_pomodoro_control_uri);
+
     ESP_LOGI(TAG, "Web server started successfully");
     return true;
 }
@@ -138,6 +146,16 @@ void WebServer::SetMotorActionConfigCallback(std::function<MotorActionConfig()> 
                                            std::function<void(const MotorActionConfig&)> set_callback) {
     get_motor_config_callback_ = get_callback;
     set_motor_config_callback_ = set_callback;
+}
+
+void WebServer::SetPomodoroConfigCallback(std::function<PomodoroConfig()> get_callback,
+                                        std::function<void(const PomodoroConfig&)> set_callback) {
+    get_pomodoro_config_callback_ = get_callback;
+    set_pomodoro_config_callback_ = set_callback;
+}
+
+void WebServer::SetPomodoroControlCallback(std::function<void(const std::string& action)> callback) {
+    pomodoro_control_callback_ = callback;
 }
 
 void WebServer::SetEmotionCallback(std::function<void(const char* emotion)> callback) {
@@ -1223,6 +1241,11 @@ esp_err_t WebServer::api_config_get_handler(httpd_req_t *req) {
         cJSON_AddNumberToObject(root, "quick_fwd_ms", config.quick_forward_duration_ms);
         cJSON_AddNumberToObject(root, "quick_bwd_ms", config.quick_backward_duration_ms);
         cJSON_AddNumberToObject(root, "def_speed_pct", config.default_speed_percent);
+        if (server->get_pomodoro_config_callback_) {
+            PomodoroConfig pomodoro_config = server->get_pomodoro_config_callback_();
+            cJSON_AddNumberToObject(root, "pomodoro_focus_minutes", pomodoro_config.focus_minutes);
+            cJSON_AddNumberToObject(root, "pomodoro_break_minutes", pomodoro_config.break_minutes);
+        }
 
         char *json_str = cJSON_PrintUnformatted(root);
         cJSON_Delete(root);
@@ -1251,11 +1274,12 @@ esp_err_t WebServer::api_config_post_handler(httpd_req_t *req) {
     httpd_resp_set_hdr(req, "Access-Control-Allow-Headers", "Content-Type");
 
     char content[512];
-    int ret = httpd_req_recv(req, content, sizeof(content));
+    int ret = httpd_req_recv(req, content, sizeof(content) - 1);
     if (ret <= 0) {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No content");
         return ESP_FAIL;
     }
+    content[ret] = '\0';
 
     // 解析JSON数据
     cJSON *root = cJSON_Parse(content);
@@ -1265,14 +1289,41 @@ esp_err_t WebServer::api_config_post_handler(httpd_req_t *req) {
     }
 
     MotorActionConfig config;
-    config.forward_duration_ms = cJSON_GetObjectItem(root, "forward_ms")->valueint;
-    config.backward_duration_ms = cJSON_GetObjectItem(root, "backward_ms")->valueint;
-    config.left_turn_duration_ms = cJSON_GetObjectItem(root, "left_turn_ms")->valueint;
-    config.right_turn_duration_ms = cJSON_GetObjectItem(root, "right_turn_ms")->valueint;
-    config.spin_duration_ms = cJSON_GetObjectItem(root, "spin_ms")->valueint;
-    config.quick_forward_duration_ms = cJSON_GetObjectItem(root, "quick_fwd_ms")->valueint;
-    config.quick_backward_duration_ms = cJSON_GetObjectItem(root, "quick_bwd_ms")->valueint;
-    config.default_speed_percent = cJSON_GetObjectItem(root, "def_speed_pct")->valueint;
+    if (server->get_motor_config_callback_) {
+        config = server->get_motor_config_callback_();
+    }
+
+    auto load_int_if_present = [root](const char* key, int& target) {
+        cJSON* item = cJSON_GetObjectItem(root, key);
+        if (cJSON_IsNumber(item)) {
+            target = item->valueint;
+        } else if (cJSON_IsString(item) && item->valuestring != nullptr) {
+            target = atoi(item->valuestring);
+        }
+    };
+
+    load_int_if_present("forward_ms", config.forward_duration_ms);
+    load_int_if_present("backward_ms", config.backward_duration_ms);
+    load_int_if_present("left_turn_ms", config.left_turn_duration_ms);
+    load_int_if_present("right_turn_ms", config.right_turn_duration_ms);
+    load_int_if_present("spin_ms", config.spin_duration_ms);
+    load_int_if_present("quick_fwd_ms", config.quick_forward_duration_ms);
+    load_int_if_present("quick_bwd_ms", config.quick_backward_duration_ms);
+    load_int_if_present("def_speed_pct", config.default_speed_percent);
+
+    PomodoroConfig pomodoro_config;
+    cJSON* focus_json = cJSON_GetObjectItem(root, "pomodoro_focus_minutes");
+    cJSON* break_json = cJSON_GetObjectItem(root, "pomodoro_break_minutes");
+    if (cJSON_IsNumber(focus_json)) {
+        pomodoro_config.focus_minutes = focus_json->valueint;
+    } else if (cJSON_IsString(focus_json) && focus_json->valuestring != nullptr) {
+        pomodoro_config.focus_minutes = atoi(focus_json->valuestring);
+    }
+    if (cJSON_IsNumber(break_json)) {
+        pomodoro_config.break_minutes = break_json->valueint;
+    } else if (cJSON_IsString(break_json) && break_json->valuestring != nullptr) {
+        pomodoro_config.break_minutes = atoi(break_json->valuestring);
+    }
 
     cJSON_Delete(root);
 
@@ -1290,6 +1341,11 @@ esp_err_t WebServer::api_config_post_handler(httpd_req_t *req) {
         ESP_LOGI(TAG, "  快速前进时间: %d ms", config.quick_forward_duration_ms);
         ESP_LOGI(TAG, "  快速后退时间: %d ms", config.quick_backward_duration_ms);
         ESP_LOGI(TAG, "  默认速度: %d%%", config.default_speed_percent);
+        if (server->set_pomodoro_config_callback_) {
+            server->set_pomodoro_config_callback_(pomodoro_config);
+            ESP_LOGI(TAG, "  番茄钟专注时间: %d 分钟", pomodoro_config.focus_minutes);
+            ESP_LOGI(TAG, "  番茄钟休息时间: %d 分钟", pomodoro_config.break_minutes);
+        }
 
         httpd_resp_set_type(req, "application/json");
         httpd_resp_send(req, "{\"status\":\"success\"}", HTTPD_RESP_USE_STRLEN);
@@ -1336,6 +1392,43 @@ void WebServer::parse_config_form_data(const char* data, MotorActionConfig& conf
     free(str);
 }
 
+esp_err_t WebServer::api_pomodoro_control_handler(httpd_req_t *req) {
+    WebServer* server = (WebServer*)req->user_ctx;
+
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Headers", "Content-Type");
+
+    char content[256];
+    int ret = httpd_req_recv(req, content, sizeof(content));
+    if (ret <= 0) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No content");
+        return ESP_FAIL;
+    }
+
+    cJSON *root = cJSON_Parse(content);
+    if (root == NULL) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
+        return ESP_FAIL;
+    }
+
+    cJSON* action_json = cJSON_GetObjectItem(root, "action");
+    if (!cJSON_IsString(action_json)) {
+        cJSON_Delete(root);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing or invalid action parameter");
+        return ESP_FAIL;
+    }
+
+    if (server->pomodoro_control_callback_) {
+        server->pomodoro_control_callback_(action_json->valuestring);
+    }
+
+    cJSON_Delete(root);
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, "{\"status\":\"ok\"}", HTTPD_RESP_USE_STRLEN);
+    return ESP_OK;
+}
+
 // 获取配置页面HTML
 const char* WebServer::get_config_html_page() {
     static const char config_html_page[] = R"html(
@@ -1344,7 +1437,7 @@ const char* WebServer::get_config_html_page() {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>电机动作配置</title>
+    <title>电机与番茄钟配置</title>
     <style>
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
@@ -1457,8 +1550,8 @@ const char* WebServer::get_config_html_page() {
 </head>
 <body>
     <div class="container">
-        <h1>⚙️ 电机动作配置</h1>
-        <form method="POST" action="/config">
+        <h1>⚙️ 电机与番茄钟配置</h1>
+        <form id="config-form" method="POST" action="/config">
             <div class="grid">
                 <div class="form-group">
                     <label for="forward_ms">前进时间</label>
@@ -1502,6 +1595,20 @@ const char* WebServer::get_config_html_page() {
                     <span class="unit">%</span>
                     <div class="description">电机动作的默认速度百分比</div>
                 </div>
+
+                <div class="form-group">
+                    <label for="pomodoro_focus_minutes">番茄钟专注时间</label>
+                    <input type="number" id="pomodoro_focus_minutes" name="pomodoro_focus_minutes" min="1" max="180" step="1" required>
+                    <span class="unit">分钟</span>
+                    <div class="description">例如 25、50、15</div>
+                </div>
+
+                <div class="form-group">
+                    <label for="pomodoro_break_minutes">番茄钟休息时间</label>
+                    <input type="number" id="pomodoro_break_minutes" name="pomodoro_break_minutes" min="1" max="60" step="1" required>
+                    <span class="unit">分钟</span>
+                    <div class="description">例如 5、10、3</div>
+                </div>
             </div>
 
             <div class="buttons">
@@ -1509,6 +1616,16 @@ const char* WebServer::get_config_html_page() {
                 <a href="/" class="btn secondary">🏠 返回遥控器</a>
             </div>
         </form>
+
+        <div style="margin-top: 30px; padding-top: 20px; border-top: 2px solid #eee;">
+            <h2 style="text-align:center; color:#333; font-size:1.4em;">🍅 番茄钟控制</h2>
+            <div class="buttons">
+                <button class="btn" onclick="controlPomodoro('start')">▶️ 开始</button>
+                <button class="btn secondary" onclick="controlPomodoro('pause')">⏸️ 暂停</button>
+                <button class="btn secondary" onclick="controlPomodoro('resume')">⏯️ 继续</button>
+                <button class="btn secondary" onclick="controlPomodoro('cancel')">⏹️ 取消</button>
+            </div>
+        </div>
     </div>
 
     <script>
@@ -1523,6 +1640,8 @@ const char* WebServer::get_config_html_page() {
                     document.getElementById('right_turn_ms').value = config.right_turn_ms;
                     document.getElementById('spin_ms').value = config.spin_ms;
                     document.getElementById('def_speed_pct').value = config.def_speed_pct;
+                    document.getElementById('pomodoro_focus_minutes').value = config.pomodoro_focus_minutes ?? 25;
+                    document.getElementById('pomodoro_break_minutes').value = config.pomodoro_break_minutes ?? 5;
                 })
                 .catch(error => console.error('Failed to load config:', error));
         };
@@ -1557,6 +1676,26 @@ const char* WebServer::get_config_html_page() {
                 alert('配置保存失败，请检查网络连接');
             });
         });
+
+        function controlPomodoro(action) {
+            fetch('/api/pomodoro/control', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ action })
+            })
+            .then(response => response.json())
+            .then(result => {
+                if (result.status !== 'ok') {
+                    alert('番茄钟操作失败');
+                }
+            })
+            .catch(error => {
+                console.error('Failed to control pomodoro:', error);
+                alert('番茄钟操作失败');
+            });
+        }
     </script>
 </body>
 </html>

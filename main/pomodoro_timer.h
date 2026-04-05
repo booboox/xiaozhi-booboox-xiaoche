@@ -22,6 +22,7 @@ public:
     static constexpr int kFocusDurationSeconds = 25 * 60;
     static constexpr int kBreakDurationSeconds = 5 * 60;
 
+    void SetDurations(int focus_minutes, int break_minutes);
     void Start();
     bool Pause();
     bool Resume();
@@ -36,6 +37,8 @@ public:
 
     State state() const { return state_; }
     int remaining_seconds() const { return remaining_seconds_; }
+    int focus_minutes() const { return focus_duration_seconds_ / 60; }
+    int break_minutes() const { return break_duration_seconds_ / 60; }
 
     std::string GetRemainingTimeText() const;
     const char* GetPhaseText() const;
@@ -44,6 +47,8 @@ public:
 private:
     State state_ = State::kIdle;
     int remaining_seconds_ = 0;
+    int focus_duration_seconds_ = kFocusDurationSeconds;
+    int break_duration_seconds_ = kBreakDurationSeconds;
 };
 
 #endif

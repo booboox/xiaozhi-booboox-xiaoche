@@ -10,6 +10,7 @@
 #include <mutex>
 #include <deque>
 #include <memory>
+#include <functional>
 
 #include "protocol.h"
 #include "ota.h"
@@ -82,6 +83,10 @@ public:
     void UpdatePomodoroDisplay();
     void NotifyPomodoroStateChange(PomodoroTimer::TickEvent event);
     bool HandlePomodoroVoiceCommand(const std::string& message);
+    void ExecutePendingLocalPomodoroCommand();
+    void LoadPomodoroConfig();
+    void SavePomodoroConfig();
+    void HandlePomodoroWebCommand(const std::string& action);
     
     /**
      * Request state transition
@@ -187,6 +192,8 @@ private:
     bool aborted_ = false;
     bool assets_version_checked_ = false;
     bool play_popup_on_listening_ = false;  // Flag to play popup sound after state changes to listening
+    bool local_pomodoro_command_in_progress_ = false;
+    bool local_pomodoro_should_close_channel_ = false;
     int clock_ticks_ = 0;
     TaskHandle_t activation_task_handle_ = nullptr;
 
@@ -194,6 +201,7 @@ private:
 
     // Web server for remote control
     std::unique_ptr<WebServer> web_server_;
+    std::function<void()> pending_local_pomodoro_command_;
 
     // Motor action configuration
     MotorActionConfig motor_action_config_;

@@ -90,6 +90,7 @@ Application::Application() {
 
     // 加载电机动作配置
     LoadMotorActionConfig();
+    LoadPomodoroConfig();
 
 #if CONFIG_USE_DEVICE_AEC && CONFIG_USE_SERVER_AEC
 #error "CONFIG_USE_DEVICE_AEC and CONFIG_USE_SERVER_AEC cannot be enabled at the same time"
@@ -175,6 +176,20 @@ void Application::UpdatePomodoroDisplay() {
                               pomodoro_timer_.GetStatusText());
 }
 
+void Application::LoadPomodoroConfig() {
+    Settings settings("pomodoro", false);
+    int focus_minutes = settings.GetInt("focus_minutes", 25);
+    int break_minutes = settings.GetInt("break_minutes", 5);
+    pomodoro_timer_.SetDurations(focus_minutes, break_minutes);
+    ESP_LOGI(TAG, "加载番茄钟配置: 专注=%d 分钟, 休息=%d 分钟", focus_minutes, break_minutes);
+}
+
+void Application::SavePomodoroConfig() {
+    Settings settings("pomodoro", true);
+    settings.SetInt("focus_minutes", pomodoro_timer_.focus_minutes());
+    settings.SetInt("break_minutes", pomodoro_timer_.break_minutes());
+}
+
 void Application::NotifyPomodoroStateChange(PomodoroTimer::TickEvent event) {
     auto display = Board::GetInstance().GetDisplay();
 
@@ -202,9 +217,21 @@ void Application::NotifyPomodoroStateChange(PomodoroTimer::TickEvent event) {
     }
 }
 
-bool Application::HandlePomodoroVoiceCommand(const std::string& message) {
-    auto display = Board::GetInstance().GetDisplay();
+void Application::ExecutePendingLocalPomodoroCommand() {
+    if (!local_pomodoro_command_in_progress_) {
+        return;
+    }
 
+    auto action = std::move(pending_local_pomodoro_command_);
+    pending_local_pomodoro_command_ = nullptr;
+    local_pomodoro_command_in_progress_ = false;
+
+    if (action) {
+        action();
+    }
+}
+
+bool Application::HandlePomodoroVoiceCommand(const std::string& message) {
     auto contains_any = [&message](std::initializer_list<const char*> keywords) {
         for (const char* keyword : keywords) {
             if (message.find(keyword) != std::string::npos) {
@@ -218,46 +245,76 @@ bool Application::HandlePomodoroVoiceCommand(const std::string& message) {
         contains_any({"番茄钟", "番茄中", "番钟", "专注钟", "专注中"}) ||
         contains_any({"剩余时间"});
 
-    auto finish_local_command = [this]() {
-        if (protocol_) {
-            protocol_->CloseAudioChannel();
-        }
-        SetDeviceState(kDeviceStateIdle);
+    auto queue_local_pomodoro_command = [this](std::function<void()> action) {
+        pending_local_pomodoro_command_ = std::move(action);
+        local_pomodoro_command_in_progress_ = true;
+        local_pomodoro_should_close_channel_ = false;
+
+        auto state = GetDeviceState();
+        Schedule([this, state]() {
+            if (!protocol_ || !protocol_->IsAudioChannelOpened()) {
+                ExecutePendingLocalPomodoroCommand();
+                return;
+            }
+
+            if (state == kDeviceStateSpeaking) {
+                local_pomodoro_should_close_channel_ = true;
+                AbortSpeaking(kAbortReasonNone);
+                return;
+            }
+
+            if (state == kDeviceStateListening || state == kDeviceStateConnecting) {
+                local_pomodoro_should_close_channel_ = true;
+                protocol_->CloseAudioChannel();
+                return;
+            }
+
+            ExecutePendingLocalPomodoroCommand();
+        });
     };
 
     if (is_pomodoro_target && contains_any({"开始", "启动", "打开"})) {
-        pomodoro_timer_.Start();
-        finish_local_command();
-        UpdatePomodoroDisplay();
-        audio_service_.PlaySound(Lang::Sounds::OGG_POPUP);
-        display->ShowNotification("番茄钟已开始", 1500);
+        queue_local_pomodoro_command([this]() {
+            pomodoro_timer_.Start();
+            SetDeviceState(kDeviceStateIdle);
+            UpdatePomodoroDisplay();
+            audio_service_.PlaySound(Lang::Sounds::OGG_POPUP);
+            Board::GetInstance().GetDisplay()->ShowNotification("番茄钟已开始", 1500);
+        });
         return true;
     }
 
     if (is_pomodoro_target && contains_any({"暂停", "停一下", "停一停"})) {
         if (pomodoro_timer_.Pause()) {
-            finish_local_command();
-            UpdatePomodoroDisplay();
-            display->ShowNotification("番茄钟已暂停", 1500);
+            queue_local_pomodoro_command([this]() {
+                SetDeviceState(kDeviceStateIdle);
+                UpdatePomodoroDisplay();
+                Board::GetInstance().GetDisplay()->ShowNotification("番茄钟已暂停", 1500);
+            });
             return true;
         }
     }
 
     if (is_pomodoro_target && contains_any({"继续", "恢复", "接着"})) {
         if (pomodoro_timer_.Resume()) {
-            finish_local_command();
-            UpdatePomodoroDisplay();
-            display->ShowNotification("番茄钟已继续", 1500);
+            queue_local_pomodoro_command([this]() {
+                SetDeviceState(kDeviceStateIdle);
+                UpdatePomodoroDisplay();
+                Board::GetInstance().GetDisplay()->ShowNotification("番茄钟已继续", 1500);
+            });
             return true;
         }
     }
 
     if (is_pomodoro_target && contains_any({"取消", "结束", "关闭", "停止"})) {
         if (pomodoro_timer_.Cancel()) {
-            finish_local_command();
-            display->ShowPomodoroTimer(false);
-            UpdateIdleClockDisplay();
-            display->ShowNotification("番茄钟已取消", 1500);
+            queue_local_pomodoro_command([this]() {
+                SetDeviceState(kDeviceStateIdle);
+                auto display = Board::GetInstance().GetDisplay();
+                display->ShowPomodoroTimer(false);
+                UpdateIdleClockDisplay();
+                display->ShowNotification("番茄钟已取消", 1500);
+            });
             return true;
         }
     }
@@ -265,16 +322,49 @@ bool Application::HandlePomodoroVoiceCommand(const std::string& message) {
     if ((is_pomodoro_target && contains_any({"还剩多久", "还剩多少", "多久结束", "剩多少"})) ||
         contains_any({"剩余时间"})) {
         if (pomodoro_timer_.IsActive()) {
-            finish_local_command();
-            UpdatePomodoroDisplay();
-            std::string notify = std::string(pomodoro_timer_.GetPhaseText()) + " " +
-                                 pomodoro_timer_.GetRemainingTimeText();
-            display->ShowNotification(notify.c_str(), 2000);
+            queue_local_pomodoro_command([this]() {
+                SetDeviceState(kDeviceStateIdle);
+                UpdatePomodoroDisplay();
+                std::string notify = std::string(pomodoro_timer_.GetPhaseText()) + " " +
+                                     pomodoro_timer_.GetRemainingTimeText();
+                Board::GetInstance().GetDisplay()->ShowNotification(notify.c_str(), 2000);
+            });
             return true;
         }
     }
 
     return false;
+}
+
+void Application::HandlePomodoroWebCommand(const std::string& action) {
+    if (action == "start") {
+        pomodoro_timer_.Start();
+        SetDeviceState(kDeviceStateIdle);
+        UpdatePomodoroDisplay();
+        return;
+    }
+    if (action == "pause") {
+        if (pomodoro_timer_.Pause()) {
+            SetDeviceState(kDeviceStateIdle);
+            UpdatePomodoroDisplay();
+        }
+        return;
+    }
+    if (action == "resume") {
+        if (pomodoro_timer_.Resume()) {
+            SetDeviceState(kDeviceStateIdle);
+            UpdatePomodoroDisplay();
+        }
+        return;
+    }
+    if (action == "cancel") {
+        if (pomodoro_timer_.Cancel()) {
+            auto display = Board::GetInstance().GetDisplay();
+            display->ShowPomodoroTimer(false);
+            SetDeviceState(kDeviceStateIdle);
+            UpdateIdleClockDisplay();
+        }
+    }
 }
 
 void Application::Initialize() {
@@ -630,6 +720,25 @@ void Application::HandleActivationDoneEvent() {
         }
     );
 
+    web_server_->SetPomodoroConfigCallback(
+        [this]() -> WebServer::PomodoroConfig {
+            WebServer::PomodoroConfig config;
+            config.focus_minutes = pomodoro_timer_.focus_minutes();
+            config.break_minutes = pomodoro_timer_.break_minutes();
+            return config;
+        },
+        [this](const WebServer::PomodoroConfig& config) {
+            pomodoro_timer_.SetDurations(config.focus_minutes, config.break_minutes);
+            SavePomodoroConfig();
+        }
+    );
+
+    web_server_->SetPomodoroControlCallback([this](const std::string& action) {
+        Schedule([this, action]() {
+            HandlePomodoroWebCommand(action);
+        });
+    });
+
     if (web_server_->Start(80)) {
         ESP_LOGI(TAG, "Web server started successfully on port 80");
         display->ShowNotification("Web控制已启用", 2000);
@@ -840,7 +949,12 @@ void Application::InitializeProtocol() {
         Schedule([this]() {
             auto display = Board::GetInstance().GetDisplay();
             display->SetChatMessage("system", "");
-            SetDeviceState(kDeviceStateIdle);
+            local_pomodoro_should_close_channel_ = false;
+            if (local_pomodoro_command_in_progress_) {
+                ExecutePendingLocalPomodoroCommand();
+            } else {
+                SetDeviceState(kDeviceStateIdle);
+            }
         });
     });
     
@@ -862,6 +976,12 @@ void Application::InitializeProtocol() {
 
         // 开始解析 JSON 字段 type 并分发处理逻辑
         auto type = cJSON_GetObjectItem(root, "type");
+        if (local_pomodoro_command_in_progress_ &&
+            cJSON_IsString(type) &&
+            (strcmp(type->valuestring, "tts") == 0 || strcmp(type->valuestring, "llm") == 0)) {
+            ESP_LOGI(TAG, "Ignoring remote %s message while handling local pomodoro command", type->valuestring);
+            return;
+        }
         if (strcmp(type->valuestring, "tts") == 0) {
             auto state = cJSON_GetObjectItem(root, "state");
             if (strcmp(state->valuestring, "start") == 0) {
@@ -871,6 +991,14 @@ void Application::InitializeProtocol() {
                 });
             } else if (strcmp(state->valuestring, "stop") == 0) {
                 Schedule([this]() {
+                    if (local_pomodoro_command_in_progress_ && local_pomodoro_should_close_channel_) {
+                        if (protocol_ && protocol_->IsAudioChannelOpened()) {
+                            protocol_->CloseAudioChannel();
+                        } else {
+                            ExecutePendingLocalPomodoroCommand();
+                        }
+                        return;
+                    }
                     if (GetDeviceState() == kDeviceStateSpeaking) {
                         if (listening_mode_ == kListeningModeManualStop) {
                             SetDeviceState(kDeviceStateIdle);
@@ -921,10 +1049,7 @@ void Application::InitializeProtocol() {
                     message.find("专注钟") != std::string::npos ||
                     message.find("专注中") != std::string::npos ||
                     message.find("剩余时间") != std::string::npos) {
-                    is_pomodoro_command = true;
-                    Schedule([this, message]() {
-                        HandlePomodoroVoiceCommand(message);
-                    });
+                    is_pomodoro_command = HandlePomodoroVoiceCommand(message);
                 }
 
                 Schedule([this, display, message, is_command = (is_display_mode_command || is_pomodoro_command)]() {
