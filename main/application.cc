@@ -976,14 +976,24 @@ void Application::InitializeProtocol() {
 
         // 开始解析 JSON 字段 type 并分发处理逻辑
         auto type = cJSON_GetObjectItem(root, "type");
-        if (local_pomodoro_command_in_progress_ &&
-            cJSON_IsString(type) &&
-            (strcmp(type->valuestring, "tts") == 0 || strcmp(type->valuestring, "llm") == 0)) {
-            ESP_LOGI(TAG, "Ignoring remote %s message while handling local pomodoro command", type->valuestring);
-            return;
-        }
         if (strcmp(type->valuestring, "tts") == 0) {
             auto state = cJSON_GetObjectItem(root, "state");
+            if (local_pomodoro_command_in_progress_) {
+                if (strcmp(state->valuestring, "stop") == 0) {
+                    Schedule([this]() {
+                        ESP_LOGI(TAG, "Received TTS stop while handling local pomodoro command");
+                        if (protocol_ && protocol_->IsAudioChannelOpened()) {
+                            protocol_->CloseAudioChannel();
+                        } else {
+                            ExecutePendingLocalPomodoroCommand();
+                        }
+                    });
+                    return;
+                }
+
+                ESP_LOGI(TAG, "Ignoring remote tts state=%s while handling local pomodoro command", state->valuestring);
+                return;
+            }
             if (strcmp(state->valuestring, "start") == 0) {
                 Schedule([this]() {
                     aborted_ = false;
@@ -1060,6 +1070,10 @@ void Application::InitializeProtocol() {
                 });
             }
         } else if (strcmp(type->valuestring, "llm") == 0) {
+            if (local_pomodoro_command_in_progress_) {
+                ESP_LOGI(TAG, "Ignoring remote llm message while handling local pomodoro command");
+                return;
+            }
             auto emotion = cJSON_GetObjectItem(root, "emotion");
             if (cJSON_IsString(emotion)) {
                 std::string emotion_str = std::string(emotion->valuestring);
