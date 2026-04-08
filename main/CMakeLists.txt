@@ -734,6 +734,18 @@ endif()
 
 file(GLOB COMMON_SOUNDS ${CMAKE_CURRENT_SOURCE_DIR}/assets/common/*.ogg)
 
+# Find xiaozhi-fonts component dynamically so extra font assets can be embedded
+find_component_by_pattern("xiaozhi-fonts" XIAOZHI_FONTS_COMPONENT XIAOZHI_FONTS_COMPONENT_PATH)
+if(XIAOZHI_FONTS_COMPONENT_PATH)
+    set(XIAOZHI_FONTS_PATH "${XIAOZHI_FONTS_COMPONENT_PATH}")
+endif()
+
+set(EXTRA_EMBED_FILES "")
+if(XIAOZHI_FONTS_PATH)
+    list(APPEND EXTRA_EMBED_FILES "${XIAOZHI_FONTS_PATH}/cbin/font_noto_qwen_16_4.bin")
+    list(APPEND EXTRA_EMBED_FILES "${XIAOZHI_FONTS_PATH}/cbin/font_puhui_common_16_4.bin")
+endif()
+
 # If target chip is ESP32, exclude specific files to avoid build errors
 if(CONFIG_IDF_TARGET_ESP32)
     list(REMOVE_ITEM SOURCES "audio/codecs/box_audio_codec.cc"
@@ -747,7 +759,7 @@ if(CONFIG_IDF_TARGET_ESP32)
 endif()
 
 idf_component_register(SRCS ${SOURCES}
-                    EMBED_FILES ${LANG_SOUNDS} ${COMMON_SOUNDS}
+                    EMBED_FILES ${LANG_SOUNDS} ${COMMON_SOUNDS} ${EXTRA_EMBED_FILES}
                     INCLUDE_DIRS ${INCLUDE_DIRS}
                     WHOLE_ARCHIVE
                     )
@@ -788,12 +800,6 @@ add_custom_target(lang_header ALL
 find_component_by_pattern("espressif__esp-sr" ESP_SR_COMPONENT ESP_SR_COMPONENT_PATH)
 if(ESP_SR_COMPONENT_PATH)
     set(ESP_SR_MODEL_PATH "${ESP_SR_COMPONENT_PATH}/model")
-endif()
-
-# Find xiaozhi-fonts component dynamically
-find_component_by_pattern("xiaozhi-fonts" XIAOZHI_FONTS_COMPONENT XIAOZHI_FONTS_COMPONENT_PATH)
-if(XIAOZHI_FONTS_COMPONENT_PATH)
-    set(XIAOZHI_FONTS_PATH "${XIAOZHI_FONTS_COMPONENT_PATH}")
 endif()
 
 if(CONFIG_BOARD_TYPE_ESP_HI)

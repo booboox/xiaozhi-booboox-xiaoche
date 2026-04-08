@@ -12,7 +12,8 @@
 
 #define TAG "WS"
 
-WebsocketProtocol::WebsocketProtocol() {
+WebsocketProtocol::WebsocketProtocol(const std::string& forced_url, const std::string& forced_token)
+    : forced_url_(forced_url), forced_token_(forced_token) {
     event_group_handle_ = xEventGroupCreate();
 }
 
@@ -81,8 +82,8 @@ void WebsocketProtocol::CloseAudioChannel() {
 
 bool WebsocketProtocol::OpenAudioChannel() {
     Settings settings("websocket", false);
-    std::string url = settings.GetString("url");
-    std::string token = settings.GetString("token");
+    std::string url = forced_url_.empty() ? settings.GetString("url") : forced_url_;
+    std::string token = forced_url_.empty() ? settings.GetString("token") : forced_token_;
     int version = settings.GetInt("version");
     if (version != 0) {
         version_ = version;

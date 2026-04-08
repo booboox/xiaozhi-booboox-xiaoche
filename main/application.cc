@@ -71,6 +71,16 @@ static volatile bool motor_executor_running_ = false;
 
 namespace {
 const char* kWeekdayEn[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
+constexpr int kBlessingPageDurationSeconds = 180;
+// Long-text blessing marquee shown on the Blessing page.
+// Keep it as a single string so the UI can scroll it continuously (instead of swapping segments).
+constexpr const char* kBlessingLongText =
+    "萱萱，生日快乐呀！  "
+    "世界很广阔，  "
+    "不要走进悲伤的角落哦，  "
+    "给你准备了零食，  "
+    "要天天快乐呀！  "
+    "我一直都在呢。";
 }
 
 // Motor control task (deprecated - now using global functions)
@@ -174,6 +184,15 @@ void Application::UpdatePomodoroDisplay() {
     display->SetPomodoroTimer(time_text.c_str(),
                               pomodoro_timer_.GetPhaseText(),
                               pomodoro_timer_.GetStatusText());
+}
+
+void Application::UpdateBlessingDisplay() {
+    auto display = Board::GetInstance().GetDisplay();
+    display->ShowBlessingPage(true);
+    display->SetBlessingMessage(
+        "",
+        kBlessingLongText
+    );
 }
 
 void Application::LoadPomodoroConfig() {
@@ -334,6 +353,32 @@ bool Application::HandlePomodoroVoiceCommand(const std::string& message) {
     }
 
     return false;
+}
+
+bool Application::HandleBlessingVoiceCommand(const std::string& message) {
+    auto contains_any = [&message](std::initializer_list<const char*> keywords) {
+        for (const char* keyword : keywords) {
+            if (message.find(keyword) != std::string::npos) {
+                return true;
+            }
+        }
+        return false;
+    };
+
+    bool has_birthday_intent =
+        contains_any({"生日快乐", "祝你生日快乐", "生日祝福", "生日页面", "生日屏幕"}) ||
+        (contains_any({"生日"}) && contains_any({"快乐", "祝福"}));
+
+    if (!has_birthday_intent) {
+        return false;
+    }
+
+    Schedule([this]() {
+        SetManualPage(kManualPageBlessing);
+        auto display = Board::GetInstance().GetDisplay();
+        display->ShowNotification("已切换到祝福页", 1500);
+    });
+    return true;
 }
 
 void Application::HandlePomodoroWebCommand(const std::string& action) {
@@ -503,6 +548,69 @@ void Application::ToggleDisplayMode() {
     SetDisplayMode(new_mode);
 }
 
+void Application::SetManualPage(ManualPage page) {
+    if (manual_page_ != page) {
+        manual_page_ = page;
+        applied_manual_page_ = kManualPageAuto;
+        blessing_page_timeout_tick_ =
+            (manual_page_ == kManualPageBlessing) ? (clock_ticks_ + kBlessingPageDurationSeconds) : -1;
+        ESP_LOGI(TAG, "Manual page changed to: %d", static_cast<int>(page));
+        HandleStateChangedEvent();
+    }
+}
+
+void Application::ApplyManualPageIfNeeded() {
+    if (manual_page_ == kManualPageAuto) {
+        applied_manual_page_ = kManualPageAuto;
+        return;
+    }
+
+    if (manual_page_ == applied_manual_page_) {
+        return;
+    }
+
+    auto display = Board::GetInstance().GetDisplay();
+    display->ShowStandbyClock(false);
+    display->ShowPomodoroTimer(false);
+    display->ShowReminderTimer(false);
+    display->ShowBlessingPage(false);
+
+    switch (manual_page_) {
+        case kManualPageStandby:
+            display->SetAnimatedEmotionMode(false);
+            UpdateIdleClockDisplay();
+            display->ShowStandbyClock(true);
+            break;
+        case kManualPageDialogue:
+            display->SetAnimatedEmotionMode(display_mode_ == kDisplayModeEyeOnly);
+            display->ShowStandbyClock(false);
+            display->ShowPomodoroTimer(false);
+            display->ShowBlessingPage(false);
+            display->SetStatus("对话页");
+            display->SetChatMessage("assistant", "手机控制已切换到对话页");
+            display->SetEmotion(display_mode_ == kDisplayModeEyeOnly ? "listening" : "neutral");
+            break;
+        case kManualPagePomodoro:
+            display->SetAnimatedEmotionMode(false);
+            display->ShowPomodoroTimer(true);
+            if (pomodoro_timer_.IsActive()) {
+                UpdatePomodoroDisplay();
+            } else {
+                display->SetPomodoroTimer("25:00", "FOCUS", "Ready");
+            }
+            break;
+        case kManualPageBlessing:
+            display->SetAnimatedEmotionMode(false);
+            UpdateBlessingDisplay();
+            break;
+        case kManualPageAuto:
+        default:
+            break;
+    }
+
+    applied_manual_page_ = manual_page_;
+}
+
 void Application::Run() {
     const EventBits_t ALL_EVENTS = 
         MAIN_EVENT_SCHEDULE |
@@ -591,7 +699,17 @@ void Application::Run() {
             // Update animated emotion if enabled
             display->UpdateAnimatedEmotion();
 
-            if (GetDeviceState() == kDeviceStateIdle) {
+            if (manual_page_ == kManualPageBlessing &&
+                blessing_page_timeout_tick_ >= 0 &&
+                clock_ticks_ >= blessing_page_timeout_tick_) {
+                SetManualPage(kManualPageStandby);
+            }
+
+            if (manual_page_ != kManualPageAuto) {
+                if (applied_manual_page_ != manual_page_) {
+                    ApplyManualPageIfNeeded();
+                }
+            } else if (GetDeviceState() == kDeviceStateIdle) {
                 if (pomodoro_timer_.IsActive()) {
                     auto event = pomodoro_timer_.Tick();
                     UpdatePomodoroDisplay();
@@ -736,6 +854,22 @@ void Application::HandleActivationDoneEvent() {
     web_server_->SetPomodoroControlCallback([this](const std::string& action) {
         Schedule([this, action]() {
             HandlePomodoroWebCommand(action);
+        });
+    });
+
+    web_server_->SetDisplayPageCallback([this](const std::string& page) {
+        Schedule([this, page]() {
+            if (page == "standby") {
+                SetManualPage(kManualPageStandby);
+            } else if (page == "dialogue") {
+                SetManualPage(kManualPageDialogue);
+            } else if (page == "pomodoro") {
+                SetManualPage(kManualPagePomodoro);
+            } else if (page == "blessing") {
+                SetManualPage(kManualPageBlessing);
+            } else {
+                SetManualPage(kManualPageAuto);
+            }
         });
     });
 
@@ -909,12 +1043,14 @@ void Application::InitializeProtocol() {
     auto& board = Board::GetInstance();
     auto display = board.GetDisplay();
     auto codec = board.GetAudioCodec();
-
+    Settings websocket_settings("websocket", false);
+    std::string websocket_url = websocket_settings.GetString("url");
     display->SetStatus(Lang::Strings::LOADING_PROTOCOL);
 
     if (ota_->HasMqttConfig()) {
         protocol_ = std::make_unique<MqttProtocol>();
-    } else if (ota_->HasWebsocketConfig()) {
+    } else if (ota_->HasWebsocketConfig() || !websocket_url.empty()) {
+        ESP_LOGI(TAG, "Using websocket protocol from local settings: %s", websocket_url.c_str());
         protocol_ = std::make_unique<WebsocketProtocol>();
     } else {
         ESP_LOGW(TAG, "No protocol specified in the OTA config, using MQTT");
@@ -1062,7 +1198,9 @@ void Application::InitializeProtocol() {
                     is_pomodoro_command = HandlePomodoroVoiceCommand(message);
                 }
 
-                Schedule([this, display, message, is_command = (is_display_mode_command || is_pomodoro_command)]() {
+                bool is_blessing_command = HandleBlessingVoiceCommand(message);
+
+                Schedule([this, display, message, is_command = (is_display_mode_command || is_pomodoro_command || is_blessing_command)]() {
                     // 在眼睛模式或命令模式下不显示聊天消息
                     if (display_mode_ != kDisplayModeEyeOnly && !is_command) {
                         display->SetChatMessage("user", message.c_str());
@@ -1469,6 +1607,11 @@ void Application::HandleStateChangedEvent() {
     auto display = board.GetDisplay();
     auto led = board.GetLed();
     led->OnStateChanged();
+
+    if (manual_page_ != kManualPageAuto) {
+        ApplyManualPageIfNeeded();
+        return;
+    }
     
     switch (new_state) {
         case kDeviceStateStarting:
@@ -1483,8 +1626,10 @@ void Application::HandleStateChangedEvent() {
             display->SetAnimatedEmotionMode(false);
             if (pomodoro_timer_.IsActive()) {
                 display->ShowStandbyClock(false);
+                display->ShowReminderTimer(false);
                 UpdatePomodoroDisplay();
             } else {
+                display->ShowReminderTimer(false);
                 display->ShowPomodoroTimer(false);
                 display->ShowStandbyClock(true);
                 UpdateIdleClockDisplay();
@@ -1496,6 +1641,7 @@ void Application::HandleStateChangedEvent() {
             display->SetAnimatedEmotionMode(false);
             display->ShowStandbyClock(false);
             display->ShowPomodoroTimer(false);
+            display->ShowReminderTimer(false);
             if (display_mode_ == kDisplayModeEyeOnly) {
                 display->SetStatus(Lang::Strings::CONNECTING);
                 display->SetChatMessage("system", "");
@@ -1509,6 +1655,7 @@ void Application::HandleStateChangedEvent() {
         case kDeviceStateListening:
             display->ShowStandbyClock(false);
             display->ShowPomodoroTimer(false);
+            display->ShowReminderTimer(false);
             if (display_mode_ == kDisplayModeEyeOnly) {
                 // 眼睛模式：显示专用的聆听表情
                 display->SetAnimatedEmotionMode(true);
@@ -1540,6 +1687,7 @@ void Application::HandleStateChangedEvent() {
         case kDeviceStateSpeaking:
             display->ShowStandbyClock(false);
             display->ShowPomodoroTimer(false);
+            display->ShowReminderTimer(false);
             if (display_mode_ == kDisplayModeEyeOnly) {
                 // 眼睛模式：只显示动画眼睛
                 display->SetAnimatedEmotionMode(true);
@@ -1567,6 +1715,7 @@ void Application::HandleStateChangedEvent() {
             display->SetAnimatedEmotionMode(false);
             display->ShowStandbyClock(false);
             display->ShowPomodoroTimer(false);
+            display->ShowReminderTimer(false);
             audio_service_.EnableVoiceProcessing(false);
             audio_service_.EnableWakeWordDetection(false);
             break;
@@ -1577,6 +1726,7 @@ void Application::HandleStateChangedEvent() {
             display->SetAnimatedEmotionMode(false);
             display->ShowStandbyClock(false);
             display->ShowPomodoroTimer(false);
+            display->ShowReminderTimer(false);
             break;
         default:
             // Do nothing

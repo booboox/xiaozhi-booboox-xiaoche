@@ -13,6 +13,9 @@
 
 #define TAG "OledDisplay"
 
+extern const uint8_t font_puhui_common_16_4_bin_start[] asm("_binary_font_puhui_common_16_4_bin_start");
+extern const uint8_t font_noto_qwen_16_4_bin_start[] asm("_binary_font_noto_qwen_16_4_bin_start");
+
 LV_FONT_DECLARE(BUILTIN_TEXT_FONT);
 LV_FONT_DECLARE(BUILTIN_ICON_FONT);
 LV_FONT_DECLARE(font_awesome_30_1);
@@ -86,6 +89,8 @@ OledDisplay::OledDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel_handl
 
     SetupStandbyClockUI();
     SetupPomodoroUI();
+    SetupReminderUI();
+    SetupBlessingUI();
 }
 
 OledDisplay::~OledDisplay() {
@@ -128,6 +133,17 @@ OledDisplay::~OledDisplay() {
         pomodoro_phase_label_ = nullptr;
         pomodoro_status_label_ = nullptr;
         lv_obj_del(pomodoro_container_);
+    }
+    if (reminder_container_ != nullptr) {
+        reminder_title_label_ = nullptr;
+        reminder_time_label_ = nullptr;
+        reminder_task_label_ = nullptr;
+        lv_obj_del(reminder_container_);
+    }
+    if (blessing_container_ != nullptr) {
+        blessing_title_label_ = nullptr;
+        blessing_message_label_ = nullptr;
+        lv_obj_del(blessing_container_);
     }
 
     if (panel_ != nullptr) {
@@ -182,6 +198,12 @@ void OledDisplay::ShowStandbyClock(bool show) {
         if (pomodoro_container_ != nullptr) {
             lv_obj_add_flag(pomodoro_container_, LV_OBJ_FLAG_HIDDEN);
         }
+        if (reminder_container_ != nullptr) {
+            lv_obj_add_flag(reminder_container_, LV_OBJ_FLAG_HIDDEN);
+        }
+        if (blessing_container_ != nullptr) {
+            lv_obj_add_flag(blessing_container_, LV_OBJ_FLAG_HIDDEN);
+        }
         if (container_ != nullptr) {
             lv_obj_add_flag(container_, LV_OBJ_FLAG_HIDDEN);
         }
@@ -224,6 +246,12 @@ void OledDisplay::ShowPomodoroTimer(bool show) {
         if (standby_container_ != nullptr) {
             lv_obj_add_flag(standby_container_, LV_OBJ_FLAG_HIDDEN);
         }
+        if (reminder_container_ != nullptr) {
+            lv_obj_add_flag(reminder_container_, LV_OBJ_FLAG_HIDDEN);
+        }
+        if (blessing_container_ != nullptr) {
+            lv_obj_add_flag(blessing_container_, LV_OBJ_FLAG_HIDDEN);
+        }
         if (container_ != nullptr) {
             lv_obj_add_flag(container_, LV_OBJ_FLAG_HIDDEN);
         }
@@ -254,6 +282,102 @@ void OledDisplay::SetPomodoroTimer(const char* time_text, const char* phase_text
     lv_label_set_text(pomodoro_time_label_, time_text ? time_text : "");
     lv_label_set_text(pomodoro_phase_label_, phase_text ? phase_text : "");
     lv_label_set_text(pomodoro_status_label_, status_text ? status_text : "");
+}
+
+void OledDisplay::ShowReminderTimer(bool show) {
+    DisplayLockGuard lock(this);
+
+    if (reminder_container_ == nullptr) {
+        return;
+    }
+
+    if (show) {
+        if (standby_container_ != nullptr) {
+            lv_obj_add_flag(standby_container_, LV_OBJ_FLAG_HIDDEN);
+        }
+        if (pomodoro_container_ != nullptr) {
+            lv_obj_add_flag(pomodoro_container_, LV_OBJ_FLAG_HIDDEN);
+        }
+        if (container_ != nullptr) {
+            lv_obj_add_flag(container_, LV_OBJ_FLAG_HIDDEN);
+        }
+        if (status_bar_ != nullptr && height_ >= 64) {
+            lv_obj_add_flag(status_bar_, LV_OBJ_FLAG_HIDDEN);
+        }
+        lv_obj_remove_flag(reminder_container_, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_move_foreground(reminder_container_);
+    } else {
+        lv_obj_add_flag(reminder_container_, LV_OBJ_FLAG_HIDDEN);
+
+        if (container_ != nullptr) {
+            lv_obj_remove_flag(container_, LV_OBJ_FLAG_HIDDEN);
+        }
+        if (status_bar_ != nullptr && height_ >= 64) {
+            lv_obj_remove_flag(status_bar_, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+}
+
+void OledDisplay::ShowBlessingPage(bool show) {
+    DisplayLockGuard lock(this);
+
+    if (blessing_container_ == nullptr) {
+        return;
+    }
+
+    if (show) {
+        if (standby_container_ != nullptr) {
+            lv_obj_add_flag(standby_container_, LV_OBJ_FLAG_HIDDEN);
+        }
+        if (pomodoro_container_ != nullptr) {
+            lv_obj_add_flag(pomodoro_container_, LV_OBJ_FLAG_HIDDEN);
+        }
+        if (reminder_container_ != nullptr) {
+            lv_obj_add_flag(reminder_container_, LV_OBJ_FLAG_HIDDEN);
+        }
+        if (container_ != nullptr) {
+            lv_obj_add_flag(container_, LV_OBJ_FLAG_HIDDEN);
+        }
+        if (status_bar_ != nullptr && height_ >= 64) {
+            lv_obj_add_flag(status_bar_, LV_OBJ_FLAG_HIDDEN);
+        }
+        lv_obj_remove_flag(blessing_container_, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_move_foreground(blessing_container_);
+    } else {
+        lv_obj_add_flag(blessing_container_, LV_OBJ_FLAG_HIDDEN);
+
+        if (container_ != nullptr) {
+            lv_obj_remove_flag(container_, LV_OBJ_FLAG_HIDDEN);
+        }
+        if (status_bar_ != nullptr && height_ >= 64) {
+            lv_obj_remove_flag(status_bar_, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+}
+
+void OledDisplay::SetBlessingMessage(const char* title_text, const char* message_text) {
+    DisplayLockGuard lock(this);
+
+    if (blessing_message_label_ == nullptr) {
+        return;
+    }
+
+    if (blessing_title_label_ != nullptr) {
+        lv_label_set_text(blessing_title_label_, title_text ? title_text : "");
+    }
+    lv_label_set_text(blessing_message_label_, message_text ? message_text : "");
+}
+
+void OledDisplay::SetReminderTimer(const char* title_text, const char* time_text, const char* task_text) {
+    DisplayLockGuard lock(this);
+
+    if (reminder_title_label_ == nullptr || reminder_time_label_ == nullptr || reminder_task_label_ == nullptr) {
+        return;
+    }
+
+    lv_label_set_text(reminder_title_label_, title_text ? title_text : "");
+    lv_label_set_text(reminder_time_label_, time_text ? time_text : "");
+    lv_label_set_text(reminder_task_label_, task_text ? task_text : "");
 }
 
 void OledDisplay::SetupUI_128x64() {
@@ -570,6 +694,108 @@ void OledDisplay::SetupPomodoroUI() {
     }
 }
 
+void OledDisplay::SetupReminderUI() {
+    DisplayLockGuard lock(this);
+
+    auto screen = lv_screen_active();
+
+    reminder_container_ = lv_obj_create(screen);
+    lv_obj_set_size(reminder_container_, LV_HOR_RES, LV_VER_RES);
+    lv_obj_set_style_bg_opa(reminder_container_, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(reminder_container_, 0, 0);
+    lv_obj_set_style_radius(reminder_container_, 0, 0);
+    lv_obj_set_style_pad_all(reminder_container_, 0, 0);
+    lv_obj_set_scrollbar_mode(reminder_container_, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_set_flex_flow(reminder_container_, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(
+        reminder_container_,
+        LV_FLEX_ALIGN_CENTER,
+        LV_FLEX_ALIGN_CENTER,
+        LV_FLEX_ALIGN_CENTER
+    );
+    lv_obj_set_style_pad_row(reminder_container_, 0, 0);
+    lv_obj_add_flag(reminder_container_, LV_OBJ_FLAG_HIDDEN);
+
+    reminder_title_label_ = lv_label_create(reminder_container_);
+    lv_label_set_text(reminder_title_label_, "REMINDER");
+    lv_obj_set_width(reminder_title_label_, LV_HOR_RES);
+    lv_obj_set_style_text_align(reminder_title_label_, LV_TEXT_ALIGN_CENTER, 0);
+
+    reminder_time_label_ = lv_label_create(reminder_container_);
+    lv_label_set_text(reminder_time_label_, "10:00");
+    lv_obj_set_width(reminder_time_label_, LV_HOR_RES);
+    lv_obj_set_style_text_align(reminder_time_label_, LV_TEXT_ALIGN_CENTER, 0);
+
+    reminder_task_label_ = lv_label_create(reminder_container_);
+    lv_label_set_text(reminder_task_label_, "去上学");
+    lv_obj_set_width(reminder_task_label_, LV_HOR_RES);
+    lv_obj_set_style_text_align(reminder_task_label_, LV_TEXT_ALIGN_CENTER, 0);
+    lv_label_set_long_mode(reminder_task_label_, LV_LABEL_LONG_SCROLL_CIRCULAR);
+
+    if (height_ >= 64) {
+        lv_obj_set_style_text_font(reminder_title_label_, &BUILTIN_TEXT_FONT, 0);
+        lv_obj_set_style_text_font(reminder_time_label_, &font_puhui_basic_20_4, 0);
+        lv_obj_set_style_text_font(reminder_task_label_, &BUILTIN_TEXT_FONT, 0);
+    } else {
+        lv_obj_set_style_text_font(reminder_title_label_, &BUILTIN_TEXT_FONT, 0);
+        lv_obj_set_style_text_font(reminder_time_label_, &BUILTIN_TEXT_FONT, 0);
+        lv_obj_set_style_text_font(reminder_task_label_, &BUILTIN_TEXT_FONT, 0);
+    }
+}
+
+void OledDisplay::SetupBlessingUI() {
+    DisplayLockGuard lock(this);
+
+    auto screen = lv_screen_active();
+
+    blessing_container_ = lv_obj_create(screen);
+    lv_obj_set_size(blessing_container_, LV_HOR_RES, LV_VER_RES);
+    lv_obj_set_style_bg_opa(blessing_container_, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(blessing_container_, 0, 0);
+    lv_obj_set_style_radius(blessing_container_, 0, 0);
+    lv_obj_set_style_pad_all(blessing_container_, 4, 0);
+    lv_obj_set_scrollbar_mode(blessing_container_, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_set_flex_flow(blessing_container_, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(
+        blessing_container_,
+        LV_FLEX_ALIGN_CENTER,
+        LV_FLEX_ALIGN_CENTER,
+        LV_FLEX_ALIGN_CENTER
+    );
+    lv_obj_set_style_pad_row(blessing_container_, 4, 0);
+    lv_obj_add_flag(blessing_container_, LV_OBJ_FLAG_HIDDEN);
+
+    blessing_message_label_ = lv_label_create(blessing_container_);
+    lv_label_set_text(blessing_message_label_, "萱萱，生日快乐呀！");
+    lv_obj_set_width(blessing_message_label_, LV_HOR_RES - 8);
+    // Use marquee-style scrolling for a single long text string.
+    lv_obj_set_style_text_align(blessing_message_label_, LV_TEXT_ALIGN_LEFT, 0);
+    lv_label_set_long_mode(blessing_message_label_, LV_LABEL_LONG_SCROLL_CIRCULAR);
+    // Slightly slower than default, but still moving enough for a compact OLED.
+    lv_obj_set_style_anim_duration(blessing_message_label_, 10000, 0);
+
+    // Font priority:
+    // 1) Noto/Qwen cbin (broader CJK coverage)
+    // 2) PuHui common cbin (smaller, common set)
+    // 3) Built-in fonts (always available)
+    {
+        std::unique_ptr<LvglCBinFont> noto_font = std::make_unique<LvglCBinFont>((void*)font_noto_qwen_16_4_bin_start);
+        if (noto_font && noto_font->font() != nullptr) {
+            blessing_font_ = std::move(noto_font);
+        } else {
+            blessing_font_ = std::make_unique<LvglCBinFont>((void*)font_puhui_common_16_4_bin_start);
+        }
+    }
+
+    if (blessing_font_ && blessing_font_->font() != nullptr) {
+        lv_obj_set_style_text_font(blessing_message_label_, blessing_font_->font(), 0);
+    } else if (height_ >= 64) {
+        lv_obj_set_style_text_font(blessing_message_label_, &font_puhui_basic_20_4, 0);
+    } else {
+        lv_obj_set_style_text_font(blessing_message_label_, &BUILTIN_TEXT_FONT, 0);
+    }
+}
+
 
 void OledDisplay::SetTheme(Theme* theme) {
     DisplayLockGuard lock(this);
@@ -582,6 +808,9 @@ void OledDisplay::SetTheme(Theme* theme) {
 }
 
 void OledDisplay::SetAnimatedEmotionMode(bool enable) {
+    if (animated_emotion_mode_ == enable) {
+        return;
+    }
     Display::SetAnimatedEmotionMode(enable);
 
     DisplayLockGuard lock(this);

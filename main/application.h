@@ -48,6 +48,14 @@ enum DisplayMode {
     kDisplayModeEyeOnly,    // 眼睛模式：只显示动画眼睛
 };
 
+enum ManualPage {
+    kManualPageAuto,
+    kManualPageStandby,
+    kManualPageDialogue,
+    kManualPagePomodoro,
+    kManualPageBlessing,
+};
+
 class Application {
 public:
     static Application& GetInstance() {
@@ -79,10 +87,14 @@ public:
     DisplayMode GetDisplayMode() const { return display_mode_; }
     void SetDisplayMode(DisplayMode mode);
     void ToggleDisplayMode();
+    void SetManualPage(ManualPage page);
+    ManualPage GetManualPage() const { return manual_page_; }
     void UpdateIdleClockDisplay();
     void UpdatePomodoroDisplay();
+    void UpdateBlessingDisplay();
     void NotifyPomodoroStateChange(PomodoroTimer::TickEvent event);
     bool HandlePomodoroVoiceCommand(const std::string& message);
+    bool HandleBlessingVoiceCommand(const std::string& message);
     void ExecutePendingLocalPomodoroCommand();
     void LoadPomodoroConfig();
     void SavePomodoroConfig();
@@ -183,6 +195,8 @@ private:
     ListeningMode listening_mode_ = kListeningModeAutoStop;
     AecMode aec_mode_ = kAecOff;
     DisplayMode display_mode_ = kDisplayModeDefault;
+    ManualPage manual_page_ = kManualPageAuto;
+    ManualPage applied_manual_page_ = kManualPageAuto;
     std::string last_error_message_;
     AudioService audio_service_;
     std::unique_ptr<Ota> ota_;
@@ -194,6 +208,7 @@ private:
     bool play_popup_on_listening_ = false;  // Flag to play popup sound after state changes to listening
     bool local_pomodoro_command_in_progress_ = false;
     bool local_pomodoro_should_close_channel_ = false;
+    int blessing_page_timeout_tick_ = -1;
     int clock_ticks_ = 0;
     TaskHandle_t activation_task_handle_ = nullptr;
 
@@ -246,6 +261,7 @@ private:
     void InitializeProtocol();
     void ShowActivationCode(const std::string& code, const std::string& message);
     void SetListeningMode(ListeningMode mode);
+    void ApplyManualPageIfNeeded();
     
     // State change handler called by state machine
     void OnStateChanged(DeviceState old_state, DeviceState new_state);

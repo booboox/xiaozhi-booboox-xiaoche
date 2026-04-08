@@ -76,7 +76,31 @@ void Display::SetPomodoroTimer(const char* time_text, const char* phase_text, co
              status_text ? status_text : "");
 }
 
+void Display::ShowReminderTimer(bool show) {
+    ESP_LOGD(TAG, "ShowReminderTimer: %d", show);
+}
+
+void Display::SetReminderTimer(const char* title_text, const char* time_text, const char* task_text) {
+    ESP_LOGD(TAG, "SetReminderTimer title=%s time=%s task=%s",
+             title_text ? title_text : "",
+             time_text ? time_text : "",
+             task_text ? task_text : "");
+}
+
+void Display::ShowBlessingPage(bool show) {
+    ESP_LOGD(TAG, "ShowBlessingPage: %d", show);
+}
+
+void Display::SetBlessingMessage(const char* title_text, const char* message_text) {
+    ESP_LOGD(TAG, "SetBlessingMessage title=%s message=%s",
+             title_text ? title_text : "",
+             message_text ? message_text : "");
+}
+
 void Display::SetAnimatedEmotionMode(bool enable) {
+    if (animated_emotion_mode_ == enable) {
+        return;
+    }
     animated_emotion_mode_ = enable;
     ESP_LOGI(TAG, "Animated emotion mode: %s", enable ? "enabled" : "disabled");
 }

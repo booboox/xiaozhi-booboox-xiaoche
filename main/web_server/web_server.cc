@@ -27,7 +27,7 @@ bool WebServer::Start(int port) {
 
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.server_port = port;
-    config.max_uri_handlers = 10;
+    config.max_uri_handlers = 16;
     // 增加超时设置以更好地处理频繁请求
     config.recv_wait_timeout = 5;  // 接收超时5秒
     config.send_wait_timeout = 5;  // 发送超时5秒
@@ -120,6 +120,14 @@ bool WebServer::Start(int port) {
     };
     httpd_register_uri_handler(server_handle_, &api_pomodoro_control_uri);
 
+    httpd_uri_t api_display_page_uri = {
+        .uri       = "/api/display/page",
+        .method    = HTTP_POST,
+        .handler   = api_display_page_handler,
+        .user_ctx  = this
+    };
+    httpd_register_uri_handler(server_handle_, &api_display_page_uri);
+
     ESP_LOGI(TAG, "Web server started successfully");
     return true;
 }
@@ -156,6 +164,10 @@ void WebServer::SetPomodoroConfigCallback(std::function<PomodoroConfig()> get_ca
 
 void WebServer::SetPomodoroControlCallback(std::function<void(const std::string& action)> callback) {
     pomodoro_control_callback_ = callback;
+}
+
+void WebServer::SetDisplayPageCallback(std::function<void(const std::string& page)> callback) {
+    display_page_callback_ = callback;
 }
 
 void WebServer::SetEmotionCallback(std::function<void(const char* emotion)> callback) {
@@ -750,6 +762,15 @@ const char* WebServer::get_html_page() {
                     <button class="action-btn" onclick="executeAction('surprised')">😲 惊讶</button>
                     <button class="action-btn" onclick="executeAction('confused')">😕 困惑</button>
                 </div>
+
+                <div class="action-group">
+                    <h4>🖥️ 页面切换</h4>
+                    <button class="action-btn" onclick="setDisplayPage('auto')">🔄 自动</button>
+                    <button class="action-btn" onclick="setDisplayPage('standby')">🕒 待机页</button>
+                    <button class="action-btn" onclick="setDisplayPage('dialogue')">💬 对话页</button>
+                    <button class="action-btn" onclick="setDisplayPage('pomodoro')">🍅 番茄钟页</button>
+                    <button class="action-btn" onclick="setDisplayPage('blessing')">🎁 祝福页</button>
+                </div>
             </div>
         </div>
     </div>
@@ -961,6 +982,31 @@ const char* WebServer::get_html_page() {
                 console.error('Failed to execute action:', action, error);
                 statusText.textContent = '动作执行失败';
                 document.getElementById('status').className = 'status disconnected';
+            }
+        }
+
+        async function setDisplayPage(page) {
+            try {
+                const response = await fetch('/api/display/page', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        page: page
+                    })
+                });
+
+                if (!response.ok) {
+                    throw new Error('Network response was not ok');
+                }
+
+                statusText.textContent = '页面切换成功';
+                document.getElementById('status').className = 'status connected';
+            } catch (error) {
+                console.error('Failed to switch display page:', error);
+                statusText.textContent = '页面切换失败';
+                document.getElementById('status').className = 'status error';
             }
         }
 
@@ -1421,6 +1467,43 @@ esp_err_t WebServer::api_pomodoro_control_handler(httpd_req_t *req) {
 
     if (server->pomodoro_control_callback_) {
         server->pomodoro_control_callback_(action_json->valuestring);
+    }
+
+    cJSON_Delete(root);
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, "{\"status\":\"ok\"}", HTTPD_RESP_USE_STRLEN);
+    return ESP_OK;
+}
+
+esp_err_t WebServer::api_display_page_handler(httpd_req_t *req) {
+    WebServer* server = (WebServer*)req->user_ctx;
+
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Headers", "Content-Type");
+
+    char content[256];
+    int ret = httpd_req_recv(req, content, sizeof(content));
+    if (ret <= 0) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No content");
+        return ESP_FAIL;
+    }
+
+    cJSON *root = cJSON_Parse(content);
+    if (root == NULL) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
+        return ESP_FAIL;
+    }
+
+    cJSON* page_json = cJSON_GetObjectItem(root, "page");
+    if (!cJSON_IsString(page_json)) {
+        cJSON_Delete(root);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing or invalid page parameter");
+        return ESP_FAIL;
+    }
+
+    if (server->display_page_callback_) {
+        server->display_page_callback_(page_json->valuestring);
     }
 
     cJSON_Delete(root);

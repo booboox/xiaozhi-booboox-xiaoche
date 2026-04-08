@@ -43,6 +43,10 @@ public:
     virtual void SetStandbyClock(const char* time_text, const char* date_text);
     virtual void ShowPomodoroTimer(bool show);
     virtual void SetPomodoroTimer(const char* time_text, const char* phase_text, const char* status_text);
+    virtual void ShowReminderTimer(bool show);
+    virtual void SetReminderTimer(const char* title_text, const char* time_text, const char* task_text);
+    virtual void ShowBlessingPage(bool show);
+    virtual void SetBlessingMessage(const char* title_text, const char* message_text);
 
     // 动画表情相关方法
     virtual void SetAnimatedEmotionMode(bool enable);

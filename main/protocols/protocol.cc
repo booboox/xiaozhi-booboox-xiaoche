@@ -4,6 +4,36 @@
 
 #define TAG "Protocol"
 
+namespace {
+std::string EscapeJsonString(const std::string& text) {
+    std::string escaped;
+    escaped.reserve(text.size() + 8);
+    for (char ch : text) {
+        switch (ch) {
+            case '\\':
+                escaped += "\\\\";
+                break;
+            case '"':
+                escaped += "\\\"";
+                break;
+            case '\n':
+                escaped += "\\n";
+                break;
+            case '\r':
+                escaped += "\\r";
+                break;
+            case '\t':
+                escaped += "\\t";
+                break;
+            default:
+                escaped += ch;
+                break;
+        }
+    }
+    return escaped;
+}
+}
+
 void Protocol::OnIncomingJson(std::function<void(const cJSON* root)> callback) {
     on_incoming_json_ = callback;
 }
@@ -70,6 +100,25 @@ void Protocol::SendStartListening(ListeningMode mode) {
 
 void Protocol::SendStopListening() {
     std::string message = "{\"session_id\":\"" + session_id_ + "\",\"type\":\"listen\",\"state\":\"stop\"}";
+    SendText(message);
+}
+
+void Protocol::SendTextInput(const std::string& text) {
+    std::string message = "{\"session_id\":\"" + session_id_ + "\",\"type\":\"stt\",\"text\":\"" +
+                          EscapeJsonString(text) + "\"}";
+    SendText(message);
+}
+
+void Protocol::SendListenDetectText(const std::string& text) {
+    std::string message = "{\"session_id\":\"" + session_id_ +
+                          "\",\"type\":\"listen\",\"state\":\"detect\",\"text\":\"" +
+                          EscapeJsonString(text) + "\"}";
+    SendText(message);
+}
+
+void Protocol::SendPlainTextMessage(const std::string& text) {
+    std::string message = "{\"session_id\":\"" + session_id_ + "\",\"type\":\"text\",\"text\":\"" +
+                          EscapeJsonString(text) + "\"}";
     SendText(message);
 }
 

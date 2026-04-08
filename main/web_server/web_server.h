@@ -48,6 +48,7 @@ public:
     void SetPomodoroConfigCallback(std::function<PomodoroConfig()> get_callback,
                                    std::function<void(const PomodoroConfig&)> set_callback);
     void SetPomodoroControlCallback(std::function<void(const std::string& action)> callback);
+    void SetDisplayPageCallback(std::function<void(const std::string& page)> callback);
 
     // Debug handler 注册（/api/debug/motor_test）
     static esp_err_t debug_motor_test_handler(httpd_req_t *req);
@@ -61,6 +62,7 @@ private:
     std::function<PomodoroConfig()> get_pomodoro_config_callback_;
     std::function<void(const PomodoroConfig&)> set_pomodoro_config_callback_;
     std::function<void(const std::string& action)> pomodoro_control_callback_;
+    std::function<void(const std::string& page)> display_page_callback_;
 
     // HTTP请求处理函数
     static esp_err_t index_get_handler(httpd_req_t *req);
@@ -72,6 +74,7 @@ private:
     static esp_err_t api_config_get_handler(httpd_req_t *req);
     static esp_err_t api_config_post_handler(httpd_req_t *req);
     static esp_err_t api_pomodoro_control_handler(httpd_req_t *req);
+    static esp_err_t api_display_page_handler(httpd_req_t *req);
 
     // CORS处理
     static esp_err_t cors_handler(httpd_req_t *req);

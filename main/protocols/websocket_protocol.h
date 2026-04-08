@@ -12,7 +12,7 @@
 
 class WebsocketProtocol : public Protocol {
 public:
-    WebsocketProtocol();
+    explicit WebsocketProtocol(const std::string& forced_url = "", const std::string& forced_token = "");
     ~WebsocketProtocol();
 
     bool Start() override;
@@ -25,6 +25,8 @@ private:
     EventGroupHandle_t event_group_handle_;
     std::unique_ptr<WebSocket> websocket_;
     int version_ = 1;
+    std::string forced_url_;
+    std::string forced_token_;
 
     void ParseServerHello(const cJSON* root);
     bool SendText(const std::string& text) override;

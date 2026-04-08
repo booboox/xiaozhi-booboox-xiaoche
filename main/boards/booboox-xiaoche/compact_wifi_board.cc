@@ -183,6 +183,15 @@ private:
         // Add motor control tools to MCP server
         auto& mcp_server = McpServer::GetInstance();
 
+        mcp_server.AddTool("self.display.show_blessing",
+            "Switch the screen to the blessing page.",
+            PropertyList(),
+            [](const PropertyList& properties) -> ReturnValue {
+                auto& app = Application::GetInstance();
+                app.SetManualPage(kManualPageBlessing);
+                return std::string("Switched to blessing page");
+            });
+
         mcp_server.AddTool("self.motor.move_forward",
             "Move the robot forward with specified speed and duration.\n"
             "Args:\n"

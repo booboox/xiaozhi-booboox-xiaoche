@@ -72,6 +72,9 @@ public:
     virtual void SendStartListening(ListeningMode mode);
     virtual void SendStopListening();
     virtual void SendAbortSpeaking(AbortReason reason);
+    virtual void SendTextInput(const std::string& text);
+    virtual void SendListenDetectText(const std::string& text);
+    virtual void SendPlainTextMessage(const std::string& text);
     virtual void SendMcpMessage(const std::string& message);
 
 protected:
@@ -95,4 +98,3 @@ protected:
 };
 
 #endif // PROTOCOL_H
-
