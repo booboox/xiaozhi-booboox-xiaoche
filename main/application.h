@@ -11,6 +11,7 @@
 #include <deque>
 #include <memory>
 #include <functional>
+#include <vector>
 
 #include "protocol.h"
 #include "ota.h"
@@ -20,6 +21,8 @@
 #include "pomodoro_timer.h"
 #include <atomic>
 #include "web_server/web_server.h"
+#include "music_player.h"
+#include "lyrics.h"
 
 // Main event bits
 #define MAIN_EVENT_SCHEDULE             (1 << 0)
@@ -199,6 +202,16 @@ private:
 
     // Motor control task
 
+    // Music player
+    MusicPlayer music_player_;
+
+    // Lyrics state
+    std::vector<LyricLine> current_lyrics_;
+    std::string current_lyrics_title_;
+    std::string current_lyrics_filename_;
+    bool pending_lyrics_fetch_ = false;
+    int last_lyric_idx_ = -1;
+
     // Web server for remote control
     std::unique_ptr<WebServer> web_server_;
     std::function<void()> pending_local_pomodoro_command_;
@@ -239,6 +252,10 @@ private:
 
     // Activation task (runs in background)
     void ActivationTask();
+
+    // Lyrics
+    std::vector<LyricLine> FetchLyrics(const std::string& title, const std::string& filename);
+    void UpdateLyricsDisplay();
 
     // Helper methods
     void CheckAssetsVersion();

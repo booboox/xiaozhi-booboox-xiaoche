@@ -43,6 +43,10 @@ public:
     virtual void SetStandbyClock(const char* time_text, const char* date_text);
     virtual void ShowPomodoroTimer(bool show);
     virtual void SetPomodoroTimer(const char* time_text, const char* phase_text, const char* status_text);
+    virtual void ShowLyricsPage(bool show) {}
+    virtual void SetLyricsContent(const char* title, int active_index,
+                                  const char* line1, const char* line2 = nullptr,
+                                  const char* line3 = nullptr, const char* line4 = nullptr) {}
 
     // 动画表情相关方法
     virtual void SetAnimatedEmotionMode(bool enable);

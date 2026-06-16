@@ -49,6 +49,19 @@ public:
                                    std::function<void(const PomodoroConfig&)> set_callback);
     void SetPomodoroControlCallback(std::function<void(const std::string& action)> callback);
 
+    // Music player callbacks
+    using MusicListCallback = std::function<std::string()>;
+    using MusicPlayCallback = std::function<void(const std::string& url, const std::string& title, const std::string& lyrics)>;
+    using MusicStopCallback = std::function<void()>;
+    using MusicStatusCallback = std::function<std::string()>;
+
+    void SetMusicCallbacks(
+        MusicListCallback list_cb,
+        MusicPlayCallback play_cb,
+        MusicStopCallback stop_cb,
+        MusicStatusCallback status_cb
+    );
+
     // Debug handler 注册（/api/debug/motor_test）
     static esp_err_t debug_motor_test_handler(httpd_req_t *req);
 
@@ -61,6 +74,10 @@ private:
     std::function<PomodoroConfig()> get_pomodoro_config_callback_;
     std::function<void(const PomodoroConfig&)> set_pomodoro_config_callback_;
     std::function<void(const std::string& action)> pomodoro_control_callback_;
+    std::function<std::string()> music_list_callback_;
+    std::function<void(const std::string& url, const std::string& title, const std::string& lyrics)> music_play_callback_;
+    std::function<void()> music_stop_callback_;
+    std::function<std::string()> music_status_callback_;
 
     // HTTP请求处理函数
     static esp_err_t index_get_handler(httpd_req_t *req);
@@ -74,10 +91,17 @@ private:
     static esp_err_t api_pomodoro_control_handler(httpd_req_t *req);
 
     // CORS处理
+    static esp_err_t music_get_handler(httpd_req_t *req);
+    static esp_err_t music_library_handler(httpd_req_t *req);
+    static esp_err_t music_play_handler(httpd_req_t *req);
+    static esp_err_t music_stop_handler(httpd_req_t *req);
+    static esp_err_t music_status_handler(httpd_req_t *req);
+
     static esp_err_t cors_handler(httpd_req_t *req);
 
     // 获取HTML页面内容
     static const char* get_html_page();
+    static const char* get_music_html_page();
 
     // 解析控制命令
     void parse_simple_control_command(const char* data, int& direction, int& speed);

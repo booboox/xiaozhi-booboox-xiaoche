@@ -86,6 +86,7 @@ OledDisplay::OledDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel_handl
 
     SetupStandbyClockUI();
     SetupPomodoroUI();
+    SetupLyricsUI();
 }
 
 OledDisplay::~OledDisplay() {
@@ -128,6 +129,14 @@ OledDisplay::~OledDisplay() {
         pomodoro_phase_label_ = nullptr;
         pomodoro_status_label_ = nullptr;
         lv_obj_del(pomodoro_container_);
+    }
+    if (lyrics_container_ != nullptr) {
+        lyrics_title_label_ = nullptr;
+        lyrics_line1_label_ = nullptr;
+        lyrics_line2_label_ = nullptr;
+        lyrics_line3_label_ = nullptr;
+        lyrics_line4_label_ = nullptr;
+        lv_obj_del(lyrics_container_);
     }
 
     if (panel_ != nullptr) {
@@ -570,6 +579,116 @@ void OledDisplay::SetupPomodoroUI() {
     }
 }
 
+
+void OledDisplay::SetupLyricsUI() {
+    DisplayLockGuard lock(this);
+
+    auto screen = lv_screen_active();
+
+    lyrics_container_ = lv_obj_create(screen);
+    lv_obj_set_size(lyrics_container_, LV_HOR_RES, LV_VER_RES);
+    lv_obj_set_style_bg_opa(lyrics_container_, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(lyrics_container_, 0, 0);
+    lv_obj_set_style_radius(lyrics_container_, 0, 0);
+    lv_obj_set_style_pad_all(lyrics_container_, 0, 0);
+    lv_obj_set_scrollbar_mode(lyrics_container_, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_set_flex_flow(lyrics_container_, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(lyrics_container_, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_row(lyrics_container_, 0, 0);
+    lv_obj_add_flag(lyrics_container_, LV_OBJ_FLAG_HIDDEN);
+
+    lyrics_title_label_ = lv_label_create(lyrics_container_);
+    lv_label_set_long_mode(lyrics_title_label_, LV_LABEL_LONG_SCROLL_CIRCULAR);
+    lv_label_set_text(lyrics_title_label_, "");
+    lv_obj_set_width(lyrics_title_label_, LV_HOR_RES);
+    lv_obj_set_style_text_align(lyrics_title_label_, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_pad_top(lyrics_title_label_, 2, 0);
+    lv_obj_set_style_pad_bottom(lyrics_title_label_, 2, 0);
+
+    lyrics_line1_label_ = lv_label_create(lyrics_container_);
+    lv_label_set_long_mode(lyrics_line1_label_, LV_LABEL_LONG_SCROLL_CIRCULAR);
+    lv_label_set_text(lyrics_line1_label_, "");
+    lv_obj_set_width(lyrics_line1_label_, LV_HOR_RES);
+    lv_obj_set_style_text_align(lyrics_line1_label_, LV_TEXT_ALIGN_CENTER, 0);
+
+    lyrics_line2_label_ = lv_label_create(lyrics_container_);
+    lv_label_set_long_mode(lyrics_line2_label_, LV_LABEL_LONG_SCROLL_CIRCULAR);
+    lv_label_set_text(lyrics_line2_label_, "");
+    lv_obj_set_width(lyrics_line2_label_, LV_HOR_RES);
+    lv_obj_set_style_text_align(lyrics_line2_label_, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_opa(lyrics_line2_label_, LV_OPA_60, 0);
+
+    lyrics_line3_label_ = lv_label_create(lyrics_container_);
+    lv_label_set_long_mode(lyrics_line3_label_, LV_LABEL_LONG_SCROLL_CIRCULAR);
+    lv_label_set_text(lyrics_line3_label_, "");
+    lv_obj_set_width(lyrics_line3_label_, LV_HOR_RES);
+    lv_obj_set_style_text_align(lyrics_line3_label_, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_opa(lyrics_line3_label_, LV_OPA_40, 0);
+
+    lyrics_line4_label_ = lv_label_create(lyrics_container_);
+    lv_label_set_long_mode(lyrics_line4_label_, LV_LABEL_LONG_SCROLL_CIRCULAR);
+    lv_label_set_text(lyrics_line4_label_, "");
+    lv_obj_set_width(lyrics_line4_label_, LV_HOR_RES);
+    lv_obj_set_style_text_align(lyrics_line4_label_, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_opa(lyrics_line4_label_, LV_OPA_40, 0);
+}
+
+void OledDisplay::ShowLyricsPage(bool show) {
+    DisplayLockGuard lock(this);
+
+    if (lyrics_container_ == nullptr) return;
+
+    if (show) {
+        if (standby_container_ != nullptr)
+            lv_obj_add_flag(standby_container_, LV_OBJ_FLAG_HIDDEN);
+        if (container_ != nullptr)
+            lv_obj_add_flag(container_, LV_OBJ_FLAG_HIDDEN);
+        if (pomodoro_container_ != nullptr)
+            lv_obj_add_flag(pomodoro_container_, LV_OBJ_FLAG_HIDDEN);
+        if (status_bar_ != nullptr && height_ >= 64)
+            lv_obj_add_flag(status_bar_, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_remove_flag(lyrics_container_, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_move_foreground(lyrics_container_);
+    } else {
+        lv_obj_add_flag(lyrics_container_, LV_OBJ_FLAG_HIDDEN);
+        if (container_ != nullptr)
+            lv_obj_remove_flag(container_, LV_OBJ_FLAG_HIDDEN);
+        if (status_bar_ != nullptr && height_ >= 64)
+            lv_obj_remove_flag(status_bar_, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
+void OledDisplay::SetLyricsContent(const char* title, int active_index,
+                                   const char* line1, const char* line2,
+                                   const char* line3, const char* line4) {
+    DisplayLockGuard lock(this);
+    if (lyrics_container_ == nullptr) return;
+
+    lv_label_set_text(lyrics_title_label_, title ? title : "");
+
+    lv_label_set_text(lyrics_line1_label_, line1 ? line1 : "");
+    lv_label_set_text(lyrics_line2_label_, line2 ? line2 : "");
+    lv_label_set_text(lyrics_line3_label_, line3 ? line3 : "");
+    lv_label_set_text(lyrics_line4_label_, line4 ? line4 : "");
+
+    auto default_opa = LV_OPA_100;
+    auto dim_opa = LV_OPA_60;
+    auto dimmer_opa = LV_OPA_40;
+
+    auto set_opa = [](lv_obj_t* label, lv_opa_t opa) {
+        if (label) lv_obj_set_style_text_opa(label, opa, 0);
+    };
+
+    set_opa(lyrics_line1_label_, active_index == 0 ? default_opa : (active_index < 0 ? default_opa : dim_opa));
+    set_opa(lyrics_line2_label_, active_index == 1 ? default_opa : dimmer_opa);
+    set_opa(lyrics_line3_label_, active_index == 2 ? default_opa : dimmer_opa);
+    set_opa(lyrics_line4_label_, active_index == 3 ? default_opa : dimmer_opa);
+
+    if (height_ < 64) {
+        lv_obj_add_flag(lyrics_line3_label_, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(lyrics_line4_label_, LV_OBJ_FLAG_HIDDEN);
+    }
+}
 
 void OledDisplay::SetTheme(Theme* theme) {
     DisplayLockGuard lock(this);

@@ -30,6 +30,7 @@ set(SOURCES "audio/audio_codec.cc"
             "protocols/mqtt_protocol.cc"
             "protocols/websocket_protocol.cc"
             "web_server/web_server.cc"
+            "music_player.cc"
             "mcp_server.cc"
             "pomodoro_timer.cc"
             "system_info.cc"
@@ -41,7 +42,7 @@ set(SOURCES "audio/audio_codec.cc"
             "main.cc"
             )
 
-set(INCLUDE_DIRS "." "display" "display/lvgl_display" "display/lvgl_display/jpg" "audio" "protocols" "web_server")
+set(INCLUDE_DIRS "." "display" "display/lvgl_display" "display/lvgl_display/jpg" "audio" "protocols" "web_server" "boards/common")
 list(APPEND INCLUDE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/roboeyes/src")
 
 # Add board common files
@@ -749,6 +750,7 @@ endif()
 idf_component_register(SRCS ${SOURCES}
                     EMBED_FILES ${LANG_SOUNDS} ${COMMON_SOUNDS}
                     INCLUDE_DIRS ${INCLUDE_DIRS}
+                    PRIV_REQUIRES esp_http_client esp_psram spi_flash esp_app_format app_update efuse
                     WHOLE_ARCHIVE
                     )
 

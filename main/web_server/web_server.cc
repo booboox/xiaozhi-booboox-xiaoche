@@ -27,11 +27,11 @@ bool WebServer::Start(int port) {
 
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.server_port = port;
-    config.max_uri_handlers = 10;
-    // 增加超时设置以更好地处理频繁请求
-    config.recv_wait_timeout = 5;  // 接收超时5秒
-    config.send_wait_timeout = 5;  // 发送超时5秒
-    config.max_resp_headers = 8;   // 减少响应头数量
+    config.max_uri_handlers = 20;
+    config.stack_size = 8192;
+    config.recv_wait_timeout = 5;
+    config.send_wait_timeout = 5;
+    config.max_resp_headers = 8;
 
     if (httpd_start(&server_handle_, &config) != ESP_OK) {
         ESP_LOGE(TAG, "Failed to start HTTP server");
@@ -120,6 +120,47 @@ bool WebServer::Start(int port) {
     };
     httpd_register_uri_handler(server_handle_, &api_pomodoro_control_uri);
 
+    // Register music endpoints
+    httpd_uri_t music_uri = {
+        .uri       = "/music",
+        .method    = HTTP_GET,
+        .handler   = music_get_handler,
+        .user_ctx  = this
+    };
+    httpd_register_uri_handler(server_handle_, &music_uri);
+
+    httpd_uri_t music_library_uri = {
+        .uri       = "/api/music/library",
+        .method    = HTTP_GET,
+        .handler   = music_library_handler,
+        .user_ctx  = this
+    };
+    httpd_register_uri_handler(server_handle_, &music_library_uri);
+
+    httpd_uri_t music_play_uri = {
+        .uri       = "/api/music/play",
+        .method    = HTTP_POST,
+        .handler   = music_play_handler,
+        .user_ctx  = this
+    };
+    httpd_register_uri_handler(server_handle_, &music_play_uri);
+
+    httpd_uri_t music_stop_uri = {
+        .uri       = "/api/music/stop",
+        .method    = HTTP_POST,
+        .handler   = music_stop_handler,
+        .user_ctx  = this
+    };
+    httpd_register_uri_handler(server_handle_, &music_stop_uri);
+
+    httpd_uri_t music_status_uri = {
+        .uri       = "/api/music/status",
+        .method    = HTTP_GET,
+        .handler   = music_status_handler,
+        .user_ctx  = this
+    };
+    httpd_register_uri_handler(server_handle_, &music_status_uri);
+
     ESP_LOGI(TAG, "Web server started successfully");
     return true;
 }
@@ -156,6 +197,18 @@ void WebServer::SetPomodoroConfigCallback(std::function<PomodoroConfig()> get_ca
 
 void WebServer::SetPomodoroControlCallback(std::function<void(const std::string& action)> callback) {
     pomodoro_control_callback_ = callback;
+}
+
+void WebServer::SetMusicCallbacks(
+    MusicListCallback list_cb,
+    MusicPlayCallback play_cb,
+    MusicStopCallback stop_cb,
+    MusicStatusCallback status_cb
+) {
+    music_list_callback_ = list_cb;
+    music_play_callback_ = play_cb;
+    music_stop_callback_ = stop_cb;
+    music_status_callback_ = status_cb;
 }
 
 void WebServer::SetEmotionCallback(std::function<void(const char* emotion)> callback) {
@@ -1427,6 +1480,421 @@ esp_err_t WebServer::api_pomodoro_control_handler(httpd_req_t *req) {
     httpd_resp_set_type(req, "application/json");
     httpd_resp_send(req, "{\"status\":\"ok\"}", HTTPD_RESP_USE_STRLEN);
     return ESP_OK;
+}
+
+// === Music Player Handlers ===
+
+esp_err_t WebServer::music_get_handler(httpd_req_t *req) {
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+    httpd_resp_set_type(req, "text/html; charset=utf-8");
+    httpd_resp_send(req, get_music_html_page(), HTTPD_RESP_USE_STRLEN);
+    return ESP_OK;
+}
+
+esp_err_t WebServer::music_library_handler(httpd_req_t *req) {
+    WebServer* server = (WebServer*)req->user_ctx;
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+    httpd_resp_set_type(req, "application/json");
+    if (server->music_list_callback_) {
+        std::string result = server->music_list_callback_();
+        httpd_resp_send(req, result.c_str(), HTTPD_RESP_USE_STRLEN);
+    } else {
+        httpd_resp_send(req, "[]", HTTPD_RESP_USE_STRLEN);
+    }
+    return ESP_OK;
+}
+
+esp_err_t WebServer::music_play_handler(httpd_req_t *req) {
+    WebServer* server = (WebServer*)req->user_ctx;
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+    httpd_resp_set_type(req, "application/json");
+
+    char content[4096];
+    int total = 0, ret;
+    while ((ret = httpd_req_recv(req, content + total, sizeof(content) - total - 1)) > 0) {
+        total += ret;
+    }
+    if (total <= 0) {
+        httpd_resp_send(req, "{\"error\":\"no content\"}", HTTPD_RESP_USE_STRLEN);
+        return ESP_FAIL;
+    }
+    content[total] = 0;
+
+    cJSON *root = cJSON_Parse(content);
+    if (!root) {
+        httpd_resp_send(req, "{\"error\":\"invalid json\"}", HTTPD_RESP_USE_STRLEN);
+        return ESP_FAIL;
+    }
+
+    cJSON* url = cJSON_GetObjectItem(root, "url");
+    cJSON* title = cJSON_GetObjectItem(root, "title");
+    cJSON* lyrics = cJSON_GetObjectItem(root, "lyrics");
+
+    if (cJSON_IsString(url) && server->music_play_callback_) {
+        server->music_play_callback_(
+            url->valuestring,
+            title && cJSON_IsString(title) ? title->valuestring : "未知",
+            lyrics && cJSON_IsString(lyrics) ? lyrics->valuestring : ""
+        );
+    }
+
+    cJSON_Delete(root);
+    httpd_resp_send(req, "{\"status\":\"ok\"}", HTTPD_RESP_USE_STRLEN);
+    return ESP_OK;
+}
+
+esp_err_t WebServer::music_stop_handler(httpd_req_t *req) {
+    WebServer* server = (WebServer*)req->user_ctx;
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+    httpd_resp_set_type(req, "application/json");
+    if (server->music_stop_callback_) {
+        server->music_stop_callback_();
+    }
+    httpd_resp_send(req, "{\"status\":\"ok\"}", HTTPD_RESP_USE_STRLEN);
+    return ESP_OK;
+}
+
+esp_err_t WebServer::music_status_handler(httpd_req_t *req) {
+    WebServer* server = (WebServer*)req->user_ctx;
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+    httpd_resp_set_type(req, "application/json");
+    if (server->music_status_callback_) {
+        std::string result = server->music_status_callback_();
+        httpd_resp_send(req, result.c_str(), HTTPD_RESP_USE_STRLEN);
+    } else {
+        httpd_resp_send(req, "{\"status\":\"idle\",\"title\":\"\"}", HTTPD_RESP_USE_STRLEN);
+    }
+    return ESP_OK;
+}
+
+const char* WebServer::get_music_html_page() {
+    // Use the MusicBox URL. If ESP32 can't resolve mobi666.ccwu.cc,
+    // change MUSIC_SERVER to the IP: https://8.136.110.80
+    static const char music_html_page[] = R"html(
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>小智音乐</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            margin: 0;
+            padding: 20px;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+        .container {
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 20px;
+            padding: 30px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            max-width: 500px;
+            width: 100%;
+        }
+        h1 { color: #333; text-align: center; margin-bottom: 10px; }
+        .now-playing {
+            background: #f0f4ff;
+            border-radius: 12px;
+            padding: 16px;
+            margin: 16px 0;
+            text-align: center;
+            min-height: 60px;
+            border: 2px solid #e0e7ff;
+        }
+        .now-playing .title { font-size: 18px; font-weight: bold; color: #333; }
+        .now-playing .status { font-size: 14px; color: #888; margin-top: 4px; }
+        .now-playing.playing { border-color: #667eea; }
+        .controls { display: flex; gap: 10px; justify-content: center; margin: 16px 0; }
+        .btn {
+            padding: 12px 30px; border: none; border-radius: 25px;
+            font-size: 16px; cursor: pointer; transition: all 0.3s ease;
+            text-decoration: none; display: inline-block;
+        }
+        .btn-play { background: linear-gradient(135deg, #4CAF50, #45a049); color: white; }
+        .btn-stop { background: linear-gradient(135deg, #f44336, #d32f2f); color: white; }
+        .btn-refresh { background: linear-gradient(135deg, #2196F3, #1976D2); color: white; }
+        .btn-home { background: linear-gradient(135deg, #FF9800, #F57C00); color: white; }
+        .btn:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(0,0,0,0.2); }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+        .song-list { list-style: none; padding: 0; margin: 16px 0; max-height: 400px; overflow-y: auto; }
+        .song-list li {
+            padding: 12px 16px; margin: 4px 0;
+            background: #f8f9ff; border-radius: 10px;
+            display: flex; justify-content: space-between; align-items: center;
+            cursor: pointer; transition: all 0.2s;
+        }
+        .song-list li:hover { background: #eef0ff; transform: translateX(4px); }
+        .song-list li .name { font-size: 14px; color: #333; flex: 1; }
+        .song-list li .size { font-size: 12px; color: #999; margin: 0 12px; white-space: nowrap; }
+        .song-list li .play-btn {
+            padding: 6px 14px; border: none; border-radius: 15px;
+            background: linear-gradient(135deg, #667eea, #764ba2); color: white;
+            font-size: 13px; cursor: pointer;
+        }
+        .loading { text-align: center; color: #999; padding: 20px; }
+        .error { color: #f44336; text-align: center; padding: 10px; }
+        .header-links { text-align: center; margin-bottom: 16px; }
+        .header-links a { color: #667eea; text-decoration: none; margin: 0 8px; font-size: 14px; }
+        .lyrics-box {
+            background: #f8f9ff; border-radius: 10px; padding: 12px;
+            margin: 12px 0; max-height: 180px; overflow-y: auto;
+            border: 1px solid #e0e7ff; display: none;
+            scroll-behavior: smooth;
+        }
+        .lyrics-box.show { display: block; }
+        .lyric-line { padding: 4px 8px; font-size: 14px; color: #999; text-align: center; transition: all .3s; }
+        .lyric-line.active { color: #333; font-size: 15px; font-weight: bold; }
+        .lyric-offset { display: flex; align-items: center; justify-content: center; gap: 6px; padding: 6px 0 0; font-size: 11px; color: #aaa; }
+        .lyric-offset button { background: #eef0ff; border: 1px solid #ddd; color: #666; padding: 2px 6px; border-radius: 4px; cursor: pointer; font-size: 11px; }
+        .lyric-offset button:hover { border-color: #667eea; color: #333; }
+        .lyric-offset .val { min-width: 50px; text-align: center; color: #667eea; font-family: monospace; font-size: 11px; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>🎵 远程音乐</h1>
+    <div class="header-links">
+        <a href="/">🏠 遥控器</a>
+        <a href="/config">⚙️ 配置</a>
+    </div>
+
+    <div class="now-playing" id="nowPlaying">
+        <div class="title" id="musicTitle">未播放</div>
+        <div class="status" id="musicStatus">空闲</div>
+    </div>
+
+    <div class="lyrics-box" id="lyricsBox">
+        <div id="lyricsContent"></div>
+        <div class="lyric-offset">
+            <button onclick="adjOff(-0.5)">-0.5s</button>
+            <button onclick="adjOff(-0.1)">-0.1</button>
+            <span class="val" id="offDisp">0.0s</span>
+            <button onclick="adjOff(0.1)">+0.1</button>
+            <button onclick="adjOff(0.5)">+0.5s</button>
+            <button onclick="resetOff()" style="margin-left:2px">↺</button>
+        </div>
+    </div>
+
+    <div class="controls">
+        <button class="btn btn-stop" id="stopBtn" onclick="stopMusic()" disabled>⏹ 停止</button>
+        <button class="btn btn-refresh" onclick="loadLibrary()">🔄 刷新列表</button>
+    </div>
+
+    <ul class="song-list" id="songList">
+        <li class="loading">加载中...</li>
+    </ul>
+</div>
+
+<script>
+let currentPlaying = null;
+const MUSIC_SERVER = 'http://mobi666.ccwu.cc';
+let currentFilename = '';
+let currentLyrics = [];
+let lyricOffset = 0;
+let lyInterval = null;
+let statusInterval = null;
+let pollFast = false;
+
+const OFFSET_KEY = 'esp_music_off_';
+
+function loadOff(fn) {
+    try { lyricOffset = parseFloat(localStorage.getItem(OFFSET_KEY + fn)) || 0; } catch(e) { lyricOffset = 0; }
+    updOffDisp();
+}
+function saveOff(fn) { try { localStorage.setItem(OFFSET_KEY + fn, lyricOffset.toString()); } catch(e) {} }
+function adjOff(d) {
+    lyricOffset = Math.round((lyricOffset + d) * 10) / 10;
+    if (Math.abs(lyricOffset) < 0.05) lyricOffset = 0;
+    if (currentFilename) saveOff(currentFilename);
+    updOffDisp();
+}
+function resetOff() { lyricOffset = 0; if (currentFilename) saveOff(currentFilename); updOffDisp(); }
+function updOffDisp() {
+    var el = document.getElementById('offDisp');
+    if (el) el.textContent = (lyricOffset >= 0 ? '+' : '') + lyricOffset.toFixed(1) + 's';
+}
+
+async function loadLibrary() {
+    const list = document.getElementById('songList');
+    list.innerHTML = '<li class="loading">加载中...</li>';
+    try {
+        const res = await fetch(MUSIC_SERVER + '/api/library');
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const songs = await res.json();
+        if (songs.length === 0) {
+            list.innerHTML = '<li class="loading">暂无歌曲，请先在 MusicBox 下载</li>';
+            return;
+        }
+        list.innerHTML = songs.map(function(s) {
+            var size = (s.size / 1024 / 1024).toFixed(1) + 'MB';
+            return '<li>' +
+                '<span class="name">' + escHtml(s.name) + '</span>' +
+                '<span class="size">' + size + '</span>' +
+                '<button class="play-btn" onclick="playMusic(\'' + escHtml(s.filename) + '\',\'' + escHtml(s.name).replace(/'/g, "\\'") + '\')">▶ 播</button>' +
+                '</li>';
+        }).join('');
+    } catch(e) {
+        list.innerHTML = '<li class="error">加载失败: ' + e.message + '</li>';
+    }
+}
+
+async function playMusic(filename, title) {
+    currentFilename = filename;
+    loadOff(filename);
+    var url = MUSIC_SERVER + '/stream/' + encodeURIComponent(filename);
+
+    // Fetch lyrics
+    var lyricsText = '';
+    try {
+        var res = await fetch(MUSIC_SERVER + '/api/lyrics?title=' + encodeURIComponent(title) + '&filename=' + encodeURIComponent(filename));
+        var data = await res.json();
+        if (data.lyrics) {
+            lyricsText = data.lyrics;
+            currentLyrics = parseLrc(data.lyrics);
+        }
+    } catch(e) { console.warn('fetch lyrics failed', e); }
+    updateWebLyrics(lyricsText);
+
+    // Send play request with lyrics included
+    fetch('/api/music/play', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({url: url, title: title, lyrics: lyricsText})
+    }).then(function(r) { return r.json(); }).then(function(d) {
+        if (d.error) alert(d.error);
+        startFastPoll();
+    }).catch(function(e) { alert('播放失败'); });
+}
+
+function stopMusic() {
+    fetch('/api/music/stop', {method: 'POST'})
+        .then(function(r) { return r.json(); })
+        .then(function() { stopFastPoll(); updateStatus(); })
+        .catch(function(e) { console.error(e); });
+}
+
+function startFastPoll() {
+    pollFast = true;
+    if (statusInterval) clearInterval(statusInterval);
+    statusInterval = setInterval(updateStatus, 300);
+}
+
+function stopFastPoll() {
+    pollFast = false;
+    if (statusInterval) clearInterval(statusInterval);
+    statusInterval = setInterval(updateStatus, 3000);
+}
+
+function updateWebLyrics(lrcText) {
+    var box = document.getElementById('lyricsBox');
+    var content = document.getElementById('lyricsContent');
+    box.classList.remove('show');
+    if (lrcText) {
+        currentLyrics = parseLrc(lrcText);
+        if (currentLyrics.length > 0) {
+            content.innerHTML = currentLyrics.map(function(l) {
+                return '<div class="lyric-line">' + escHtml(l.text) + '</div>';
+            }).join('');
+            box.classList.add('show');
+            return;
+        }
+    }
+    content.innerHTML = '<div class="lyric-line" style="color:#aaa">暂无歌词</div>';
+    currentLyrics = [];
+}
+
+function parseLrc(text) {
+    var lines = text.split('\n');
+    var out = [];
+    var re = /\[(\d{2}):(\d{2})[\.\:](\d{2,3})\]/g;
+    for (var i = 0; i < lines.length; i++) {
+        var line = lines[i];
+        var txt = line.replace(re, '').trim();
+        if (!txt) continue;
+        var m;
+        while ((m = re.exec(line)) !== null) {
+            var mins = parseInt(m[1]);
+            var secs = parseInt(m[2]);
+            var ms = parseInt(m[3].padEnd(3, '0'));
+            var t = mins * 60 + secs + ms / 1000;
+            out.push({time: t, text: txt});
+        }
+    }
+    out.sort(function(a, b) { return a.time - b.time; });
+    return out;
+}
+
+async function updateStatus() {
+    try {
+        const res = await fetch('/api/music/status');
+        const data = await res.json();
+        const box = document.getElementById('nowPlaying');
+        const title = document.getElementById('musicTitle');
+        const status = document.getElementById('musicStatus');
+        const stopBtn = document.getElementById('stopBtn');
+
+        if (data.status === 'playing' || data.status === 'connecting') {
+            box.className = 'now-playing playing';
+            title.textContent = data.title || '未知歌曲';
+            status.textContent = data.status === 'playing' ? '▶ 播放中' : '⏳ 连接中...';
+            stopBtn.disabled = false;
+
+            if (data.status === 'playing' && currentLyrics.length > 0 && data.position_ms !== undefined) {
+                syncLyrics(data.position_ms / 1000);
+            }
+        } else {
+            box.className = 'now-playing';
+            title.textContent = data.title || '未播放';
+            status.textContent = data.status === 'finished' ? '✅ 播放完毕' : '⏹ 空闲';
+            stopBtn.disabled = true;
+            if (data.status === 'finished' || data.status === 'stopped') {
+                stopFastPoll();
+            }
+        }
+    } catch(e) {
+        console.error(e);
+    }
+}
+
+function syncLyrics(currentTime) {
+    if (currentLyrics.length === 0) return;
+    var t = currentTime + lyricOffset;
+    var activeIndex = -1;
+    for (var i = currentLyrics.length - 1; i >= 0; i--) {
+        if (t >= currentLyrics[i].time) {
+            activeIndex = i;
+            break;
+        }
+    }
+    var lines = document.querySelectorAll('#lyricsContent .lyric-line');
+    for (var j = 0; j < lines.length; j++) {
+        if (j === activeIndex) lines[j].classList.add('active');
+        else lines[j].classList.remove('active');
+    }
+    if (activeIndex >= 0 && lines[activeIndex]) {
+        lines[activeIndex].scrollIntoView({block: 'center', behavior: 'smooth'});
+    }
+}
+
+function escHtml(s) {
+    if (!s) return '';
+    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/'/g,'&#39;').replace(/"/g,'&quot;');
+}
+
+setInterval(updateStatus, 3000);
+loadLibrary();
+updateStatus();
+</script>
+</body>
+</html>
+)html";
+    return music_html_page;
 }
 
 // 获取配置页面HTML

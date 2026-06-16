@@ -32,6 +32,13 @@ private:
     lv_obj_t* pomodoro_phase_label_ = nullptr;
     lv_obj_t* pomodoro_status_label_ = nullptr;
 
+    lv_obj_t* lyrics_container_ = nullptr;
+    lv_obj_t* lyrics_title_label_ = nullptr;
+    lv_obj_t* lyrics_line1_label_ = nullptr;
+    lv_obj_t* lyrics_line2_label_ = nullptr;
+    lv_obj_t* lyrics_line3_label_ = nullptr;
+    lv_obj_t* lyrics_line4_label_ = nullptr;
+
     // 动画表情相关
     std::unique_ptr<RoboEyesAdapter> roboeyes_adapter_;
 
@@ -42,6 +49,7 @@ private:
     void SetupUI_128x32();
     void SetupStandbyClockUI();
     void SetupPomodoroUI();
+    void SetupLyricsUI();
 
 public:
     OledDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel_handle_t panel, int width, int height, bool mirror_x, bool mirror_y);
@@ -52,6 +60,10 @@ public:
     virtual void SetStandbyClock(const char* time_text, const char* date_text) override;
     virtual void ShowPomodoroTimer(bool show) override;
     virtual void SetPomodoroTimer(const char* time_text, const char* phase_text, const char* status_text) override;
+    virtual void ShowLyricsPage(bool show) override;
+    virtual void SetLyricsContent(const char* title, int active_index,
+                                  const char* line1, const char* line2 = nullptr,
+                                  const char* line3 = nullptr, const char* line4 = nullptr) override;
     virtual void SetEmotion(const char* emotion) override;
     virtual void SetTheme(Theme* theme) override;
 

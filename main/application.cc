@@ -17,9 +17,11 @@
 #include <driver/ledc.h>
 #include <driver/gpio.h>
 #include <arpa/inet.h>
+#include <esp_http_client.h>
 #include <font_awesome.h>
 #include <ctime>
 #include <tuple>
+#include <cctype>
 
 #define TAG "Application"
 // 包含板级引脚配置（由选定的 board 提供的 config.h）
@@ -174,6 +176,94 @@ void Application::UpdatePomodoroDisplay() {
     display->SetPomodoroTimer(time_text.c_str(),
                               pomodoro_timer_.GetPhaseText(),
                               pomodoro_timer_.GetStatusText());
+}
+
+static std::string UrlEncode(const std::string& s) {
+    std::string out;
+    for (unsigned char c : s) {
+        if (isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
+            out += c;
+        } else if (c == ' ') {
+            out += "%20";
+        } else {
+            char buf[4];
+            snprintf(buf, sizeof(buf), "%%%02X", c);
+            out += buf;
+        }
+    }
+    return out;
+}
+
+std::vector<LyricLine> Application::FetchLyrics(const std::string& title, const std::string& filename) {
+    std::string url = "http://mobi666.ccwu.cc/api/lyrics?title=";
+    url += UrlEncode(title);
+    url += "&filename=";
+    url += UrlEncode(filename);
+
+    esp_http_client_config_t cfg = {};
+    cfg.url = url.c_str();
+    cfg.timeout_ms = 5000;
+    auto client = esp_http_client_init(&cfg);
+    if (!client) return {};
+
+    std::string result;
+    if (esp_http_client_open(client, 0) == ESP_OK) {
+        esp_http_client_fetch_headers(client);
+        char buf[2048];
+        int len;
+        while ((len = esp_http_client_read(client, buf, sizeof(buf) - 1)) > 0) {
+            buf[len] = 0;
+            result += buf;
+        }
+    }
+    esp_http_client_close(client);
+    esp_http_client_cleanup(client);
+
+    if (result.empty()) return {};
+
+    auto root = cJSON_Parse(result.c_str());
+    if (!root) return {};
+
+    auto lyrics_json = cJSON_GetObjectItem(root, "lyrics");
+    std::vector<LyricLine> out;
+    if (cJSON_IsString(lyrics_json) && lyrics_json->valuestring) {
+        out = ParseLrc(lyrics_json->valuestring);
+    }
+    cJSON_Delete(root);
+    return out;
+}
+
+void Application::UpdateLyricsDisplay() {
+    auto display = Board::GetInstance().GetDisplay();
+    if (!display) return;
+
+    if (current_lyrics_.empty() || !music_player_.IsPlaying()) {
+        return;
+    }
+
+    int pos = music_player_.GetPositionMs();
+    int idx = FindLyricLine(current_lyrics_, pos);
+    std::string l1, l2, l3, l4;
+
+    auto get_line = [&](int i) -> const char* {
+        if (i >= 0 && i < (int)current_lyrics_.size())
+            return current_lyrics_[i].text.c_str();
+        return "";
+    };
+
+    if (display->height() >= 64) {
+        l1 = get_line(idx);
+        l2 = get_line(idx + 1);
+        l3 = get_line(idx + 2);
+        l4 = get_line(idx + 3);
+        display->SetLyricsContent(current_lyrics_title_.c_str(), idx,
+                                  l1.c_str(), l2.c_str(), l3.c_str(), l4.c_str());
+    } else {
+        l1 = get_line(idx);
+        l2 = get_line(idx + 1);
+        display->SetLyricsContent(current_lyrics_title_.c_str(), idx,
+                                  l1.c_str(), l2.c_str());
+    }
 }
 
 void Application::LoadPomodoroConfig() {
@@ -591,7 +681,17 @@ void Application::Run() {
             // Update animated emotion if enabled
             display->UpdateAnimatedEmotion();
 
-            if (GetDeviceState() == kDeviceStateIdle) {
+            // Update lyrics display if music is playing
+            if (music_player_.IsPlaying() && !current_lyrics_.empty()) {
+                int pos = music_player_.GetPositionMs();
+                int idx = FindLyricLine(current_lyrics_, pos);
+                if (idx != last_lyric_idx_) {
+                    last_lyric_idx_ = idx;
+                    UpdateLyricsDisplay();
+                }
+            }
+
+            if (GetDeviceState() == kDeviceStateIdle && !music_player_.IsPlaying()) {
                 if (pomodoro_timer_.IsActive()) {
                     auto event = pomodoro_timer_.Tick();
                     UpdatePomodoroDisplay();
@@ -738,6 +838,82 @@ void Application::HandleActivationDoneEvent() {
             HandlePomodoroWebCommand(action);
         });
     });
+
+    // Set music player status callback for OLED display
+    music_player_.SetStatusCallback([this](const std::string& status, const std::string& title) {
+        auto display = Board::GetInstance().GetDisplay();
+        if (!display) return;
+        if (status == "playing") {
+            display->ShowNotification(("🎵 " + title).c_str(), 5000);
+        } else if (status == "finished" || status == "stopped") {
+            display->ShowNotification("音乐停止", 2000);
+            Schedule([this]() {
+                if (music_player_.IsPlaying()) return;
+                current_lyrics_.clear();
+                last_lyric_idx_ = -1;
+                auto d = Board::GetInstance().GetDisplay();
+                if (d) d->ShowLyricsPage(false);
+            });
+        }
+    });
+
+    // Music player callbacks
+    web_server_->SetMusicCallbacks(
+        [this]() -> std::string {
+            // Proxy the music library from the MusicBox server
+            std::string result;
+            esp_http_client_config_t cfg = {};
+            cfg.url = "https://mobi666.ccwu.cc/api/library";
+            cfg.timeout_ms = 5000;
+            auto client = esp_http_client_init(&cfg);
+            if (client) {
+                if (esp_http_client_open(client, 0) == ESP_OK) {
+                    esp_http_client_fetch_headers(client);
+                    char buf[4096];
+                    int len;
+                    while ((len = esp_http_client_read(client, buf, sizeof(buf) - 1)) > 0) {
+                        buf[len] = 0;
+                        result += buf;
+                    }
+                }
+                esp_http_client_close(client);
+                esp_http_client_cleanup(client);
+            }
+            return result;
+        },
+        [this](const std::string& url, const std::string& title, const std::string& lyrics_text) {
+            music_player_.Play(url, title);
+            current_lyrics_title_ = title;
+            last_lyric_idx_ = -1;
+            auto display = Board::GetInstance().GetDisplay();
+            if (!lyrics_text.empty()) {
+                current_lyrics_ = ParseLrc(lyrics_text);
+                ESP_LOGI(TAG, "play+lyrics: len=%zu parsed=%zu", lyrics_text.size(), current_lyrics_.size());
+                if (!current_lyrics_.empty()) {
+                    if (display) display->ShowLyricsPage(true);
+                    UpdateLyricsDisplay();
+                    return;
+                }
+            }
+            current_lyrics_.clear();
+            if (display) {
+                display->ShowLyricsPage(true);
+                display->SetLyricsContent(title.c_str(), -1, "等待歌词加载...", "", "", "");
+            }
+        },
+        [this]() {
+            music_player_.Stop();
+        },
+        [this]() -> std::string {
+            std::string status = music_player_.GetStatus();
+            std::string title = music_player_.GetCurrentTitle();
+            int pos_ms = music_player_.GetPositionMs();
+            char buf[256];
+            snprintf(buf, sizeof(buf), "{\"status\":\"%s\",\"title\":\"%s\",\"position_ms\":%d}",
+                     status.c_str(), title.c_str(), pos_ms);
+            return std::string(buf);
+        }
+    );
 
     if (web_server_->Start(80)) {
         ESP_LOGI(TAG, "Web server started successfully on port 80");
