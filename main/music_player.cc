@@ -11,7 +11,6 @@ static const char* TAG = "MusicPlayer";
 
 #define MP3_BUF_SIZE 16384
 #define PCM_FRAME_SAMPLES 2304  // max MP3 frame samples
-#define PREBUFFER_THRESHOLD 4096
 
 MusicPlayer::MusicPlayer() {}
 
@@ -140,27 +139,19 @@ void MusicPlayer::StreamTaskImpl() {
     pcm_out.reserve(PCM_FRAME_SAMPLES);
     SetStatus("playing", current_title_);
 
-    // Prebuffer: fill at least PREBUFFER_THRESHOLD bytes before decoding
-    while (mp3_fill < PREBUFFER_THRESHOLD) {
-        int read_len = esp_http_client_read(client, (char*)mp3_buf + mp3_fill, MP3_BUF_SIZE - mp3_fill);
-        if (read_len <= 0) break;
-        mp3_fill += read_len;
-    }
-
     while (true) {
         {
             std::lock_guard<std::mutex> lock(mutex_);
             if (stop_requested_) break;
         }
 
-        if (mp3_fill < MP3_BUF_SIZE / 2) {
-            int read_len = esp_http_client_read(client, (char*)mp3_buf + mp3_fill, MP3_BUF_SIZE - mp3_fill);
-            if (read_len > 0) mp3_fill += read_len;
-            else if (read_len < 0) {
-                ESP_LOGE(TAG, "HTTP read error");
-                break;
-            }
+        int read_len = esp_http_client_read(client, (char*)mp3_buf + mp3_fill, MP3_BUF_SIZE - mp3_fill);
+        if (read_len < 0) {
+            ESP_LOGE(TAG, "HTTP read error");
+            break;
         }
+
+        mp3_fill += read_len;
         if (mp3_fill == 0) break;
 
         // Decode MP3 frames

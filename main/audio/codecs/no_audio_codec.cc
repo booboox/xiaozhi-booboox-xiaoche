@@ -214,34 +214,26 @@ NoAudioCodecSimplex::NoAudioCodecSimplex(int input_sample_rate, int output_sampl
     ESP_LOGI(TAG, "Simplex channels created");
 }
 
-void NoAudioCodec::UpdateVolumeFactor() {
-    if (output_volume_ != cached_volume_) {
-        cached_volume_ = output_volume_;
-        float vol = (float)output_volume_ / 100.0f;
-        volume_factor_ = (int32_t)(vol * vol * 65536.0f);
-        if (volume_factor_ < 0) volume_factor_ = 0;
-        if (volume_factor_ > 65536) volume_factor_ = 65536;
-    }
-}
-
 int NoAudioCodec::Write(const int16_t* data, int samples) {
     std::lock_guard<std::mutex> lock(data_if_mutex_);
-    UpdateVolumeFactor();
+    std::vector<int32_t> buffer(samples);
 
-    write_buffer_.resize(samples);
+    // output_volume_: 0-100
+    // volume_factor_: 0-65536
+    int32_t volume_factor = pow(double(output_volume_) / 100.0, 2) * 65536;
     for (int i = 0; i < samples; i++) {
-        int64_t temp = int64_t(data[i]) * volume_factor_;
+        int64_t temp = int64_t(data[i]) * volume_factor; // 使用 int64_t 进行乘法运算
         if (temp > INT32_MAX) {
-            write_buffer_[i] = INT32_MAX;
+            buffer[i] = INT32_MAX;
         } else if (temp < INT32_MIN) {
-            write_buffer_[i] = INT32_MIN;
+            buffer[i] = INT32_MIN;
         } else {
-            write_buffer_[i] = static_cast<int32_t>(temp);
+            buffer[i] = static_cast<int32_t>(temp);
         }
     }
 
     size_t bytes_written;
-    ESP_ERROR_CHECK(i2s_channel_write(tx_handle_, write_buffer_.data(), samples * sizeof(int32_t), &bytes_written, portMAX_DELAY));
+    ESP_ERROR_CHECK(i2s_channel_write(tx_handle_, buffer.data(), samples * sizeof(int32_t), &bytes_written, portMAX_DELAY));
     return bytes_written / sizeof(int32_t);
 }
 
