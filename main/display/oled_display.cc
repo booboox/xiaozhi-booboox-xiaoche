@@ -598,7 +598,7 @@ void OledDisplay::SetupLyricsUI() {
     lv_obj_add_flag(lyrics_container_, LV_OBJ_FLAG_HIDDEN);
 
     lyrics_title_label_ = lv_label_create(lyrics_container_);
-    lv_label_set_long_mode(lyrics_title_label_, LV_LABEL_LONG_SCROLL_CIRCULAR);
+    lv_label_set_long_mode(lyrics_title_label_, LV_LABEL_LONG_DOT);
     lv_label_set_text(lyrics_title_label_, "");
     lv_obj_set_width(lyrics_title_label_, LV_HOR_RES);
     lv_obj_set_style_text_align(lyrics_title_label_, LV_TEXT_ALIGN_CENTER, 0);
@@ -606,27 +606,27 @@ void OledDisplay::SetupLyricsUI() {
     lv_obj_set_style_pad_bottom(lyrics_title_label_, 2, 0);
 
     lyrics_line1_label_ = lv_label_create(lyrics_container_);
-    lv_label_set_long_mode(lyrics_line1_label_, LV_LABEL_LONG_SCROLL_CIRCULAR);
+    lv_label_set_long_mode(lyrics_line1_label_, LV_LABEL_LONG_DOT);
     lv_label_set_text(lyrics_line1_label_, "");
     lv_obj_set_width(lyrics_line1_label_, LV_HOR_RES);
     lv_obj_set_style_text_align(lyrics_line1_label_, LV_TEXT_ALIGN_CENTER, 0);
 
     lyrics_line2_label_ = lv_label_create(lyrics_container_);
-    lv_label_set_long_mode(lyrics_line2_label_, LV_LABEL_LONG_SCROLL_CIRCULAR);
+    lv_label_set_long_mode(lyrics_line2_label_, LV_LABEL_LONG_DOT);
     lv_label_set_text(lyrics_line2_label_, "");
     lv_obj_set_width(lyrics_line2_label_, LV_HOR_RES);
     lv_obj_set_style_text_align(lyrics_line2_label_, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_text_opa(lyrics_line2_label_, LV_OPA_60, 0);
 
     lyrics_line3_label_ = lv_label_create(lyrics_container_);
-    lv_label_set_long_mode(lyrics_line3_label_, LV_LABEL_LONG_SCROLL_CIRCULAR);
+    lv_label_set_long_mode(lyrics_line3_label_, LV_LABEL_LONG_DOT);
     lv_label_set_text(lyrics_line3_label_, "");
     lv_obj_set_width(lyrics_line3_label_, LV_HOR_RES);
     lv_obj_set_style_text_align(lyrics_line3_label_, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_text_opa(lyrics_line3_label_, LV_OPA_40, 0);
 
     lyrics_line4_label_ = lv_label_create(lyrics_container_);
-    lv_label_set_long_mode(lyrics_line4_label_, LV_LABEL_LONG_SCROLL_CIRCULAR);
+    lv_label_set_long_mode(lyrics_line4_label_, LV_LABEL_LONG_DOT);
     lv_label_set_text(lyrics_line4_label_, "");
     lv_obj_set_width(lyrics_line4_label_, LV_HOR_RES);
     lv_obj_set_style_text_align(lyrics_line4_label_, LV_TEXT_ALIGN_CENTER, 0);
