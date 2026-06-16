@@ -598,7 +598,7 @@ void OledDisplay::SetupLyricsUI() {
     lv_obj_add_flag(lyrics_container_, LV_OBJ_FLAG_HIDDEN);
 
     lyrics_title_label_ = lv_label_create(lyrics_container_);
-    lv_label_set_long_mode(lyrics_title_label_, LV_LABEL_LONG_DOT);
+    lv_label_set_long_mode(lyrics_title_label_, LV_LABEL_LONG_SCROLL_CIRCULAR);
     lv_label_set_text(lyrics_title_label_, "");
     lv_obj_set_width(lyrics_title_label_, LV_HOR_RES);
     lv_obj_set_style_text_align(lyrics_title_label_, LV_TEXT_ALIGN_CENTER, 0);
