@@ -148,10 +148,11 @@ public:
     struct PendingMusicPlay {
         std::string url;
         std::string title;
+        std::string filename;
         std::string lyrics;
         bool has_pending = false;
     };
-    void SetPendingMusicPlay(const std::string& url, const std::string& title, const std::string& lyrics);
+    void SetPendingMusicPlay(const std::string& url, const std::string& title, const std::string& lyrics, const std::string& filename = "");
     bool HasPendingMusicPlay() const;
     void ExecutePendingMusicPlay();
     AudioService& GetAudioService() { return audio_service_; }
@@ -277,6 +278,7 @@ private:
     // Lyrics
     std::vector<LyricLine> FetchLyrics(const std::string& title, const std::string& filename);
     void UpdateLyricsDisplay();
+    void StartAsyncLyricsFetch(const std::string& title, const std::string& filename);
 
     // Helper methods
     void CheckAssetsVersion();

@@ -3,8 +3,6 @@
 #include <nvs.h>
 #include <nvs_flash.h>
 #include <driver/gpio.h>
-#include <driver/ledc.h>
-#include <driver/periph_ctrl.h>
 #include <esp_event.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
@@ -32,17 +30,6 @@
 
 extern "C" void app_main(void)
 {
-    // Initialize LEDC for PWM motor control before any other components
-    // Enable LEDC peripheral
-    periph_module_enable(PERIPH_LEDC_MODULE);
-
-    esp_err_t ledc_ret = ledc_fade_func_install(0);
-    if (ledc_ret != ESP_OK) {
-        ESP_LOGW(TAG, "Failed to install LEDC fade service: %s", esp_err_to_name(ledc_ret));
-    } else {
-        ESP_LOGI(TAG, "LEDC fade service initialized successfully");
-    }
-
     // Initialize NVS flash for WiFi configuration
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {

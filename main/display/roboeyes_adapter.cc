@@ -690,6 +690,7 @@ bool RoboEyesAdapter::StartTimer(int fps) {
                     self->Update();
                     vTaskDelay(pdMS_TO_TICKS(delay_ms));
                 }
+                self->panel_task_ = nullptr;
                 vTaskDelete(nullptr);
             },
             "roboeyes_panel_task",
@@ -738,9 +739,14 @@ void RoboEyesAdapter::StopTimer() {
     }
     if (panel_task_ != nullptr) {
         panel_task_running_ = false;
-        // wait a short moment for task to exit
-        vTaskDelay(pdMS_TO_TICKS(20));
-        panel_task_ = nullptr;
+        // Wait for the task to acknowledge shutdown before freeing display resources.
+        for (int i = 0; i < 20 && panel_task_ != nullptr; ++i) {
+            vTaskDelay(pdMS_TO_TICKS(10));
+        }
+        if (panel_task_ != nullptr) {
+            ESP_LOGW(TAG, "Panel task did not exit in time, forcing handle clear");
+            panel_task_ = nullptr;
+        }
         ESP_LOGI(TAG, "Stopped panel task");
     }
 }

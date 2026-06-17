@@ -22,6 +22,7 @@
 #include <ctime>
 #include <tuple>
 #include <cctype>
+#include <utility>
 
 #define TAG "Application"
 // 包含板级引脚配置（由选定的 board 提供的 config.h）
@@ -269,9 +270,11 @@ void Application::UpdateLyricsDisplay() {
 void Application::PlayMusic(const std::string& url, const std::string& title, const std::string& lyrics) {
     music_player_.Play(url, title);
     current_lyrics_title_ = title;
+    current_lyrics_filename_.clear();
     current_lyrics_raw_ = lyrics;
     last_lyric_idx_ = -1;
     music_was_playing_ = true;
+    pending_lyrics_fetch_ = false;
 
     auto display = Board::GetInstance().GetDisplay();
     if (!lyrics.empty()) {
@@ -288,6 +291,74 @@ void Application::PlayMusic(const std::string& url, const std::string& title, co
         display->ShowLyricsPage(true);
         display->SetLyricsContent(title.c_str(), -1, "等待歌词加载...", "", "", "");
     }
+
+}
+
+void Application::StartAsyncLyricsFetch(const std::string& title, const std::string& filename) {
+    if (pending_lyrics_fetch_ || title.empty()) {
+        return;
+    }
+
+    pending_lyrics_fetch_ = true;
+    current_lyrics_filename_ = filename;
+
+    struct AsyncLyricsFetchContext {
+        Application* app;
+        std::string title;
+        std::string filename;
+    };
+
+    auto* ctx = new AsyncLyricsFetchContext{this, title, filename};
+    xTaskCreate([](void* arg) {
+        std::unique_ptr<AsyncLyricsFetchContext> ctx(static_cast<AsyncLyricsFetchContext*>(arg));
+        auto lyrics = ctx->app->FetchLyrics(ctx->title, ctx->filename);
+        std::string raw_lyrics;
+        if (!lyrics.empty()) {
+            for (const auto& line : lyrics) {
+                int min = line.time_ms / 60000;
+                int sec = (line.time_ms % 60000) / 1000;
+                int cs = (line.time_ms % 1000) / 10;
+                char buf[32];
+                snprintf(buf, sizeof(buf), "[%02d:%02d.%02d]", min, sec, cs);
+                raw_lyrics += buf;
+                raw_lyrics += line.text;
+                raw_lyrics += "\n";
+            }
+        }
+
+        ctx->app->Schedule([app = ctx->app,
+                            title = std::move(ctx->title),
+                            filename = std::move(ctx->filename),
+                            lyrics = std::move(lyrics),
+                            raw_lyrics = std::move(raw_lyrics)]() mutable {
+            app->pending_lyrics_fetch_ = false;
+
+            if (!app->music_player_.IsPlaying()) {
+                return;
+            }
+            if (app->current_lyrics_title_ != title) {
+                return;
+            }
+            if (!app->current_lyrics_filename_.empty() && app->current_lyrics_filename_ != filename) {
+                return;
+            }
+
+            app->current_lyrics_ = std::move(lyrics);
+            app->current_lyrics_raw_ = std::move(raw_lyrics);
+            app->last_lyric_idx_ = -1;
+
+            auto display = Board::GetInstance().GetDisplay();
+            if (!app->current_lyrics_.empty()) {
+                if (display) {
+                    display->ShowLyricsPage(true);
+                }
+                app->UpdateLyricsDisplay();
+            } else if (display) {
+                display->SetLyricsContent(title.c_str(), -1, "暂无歌词", "", "", "");
+            }
+        });
+        vTaskDelete(nullptr);
+    }, "lyrics_fetch", 8192, ctx, 4, nullptr);
 }
 
 void Application::PlayMusic(const std::string& url, const std::string& title) {
@@ -317,9 +388,10 @@ void Application::SetMusicVolume(int volume) {
     }
 }
 
-void Application::SetPendingMusicPlay(const std::string& url, const std::string& title, const std::string& lyrics) {
+void Application::SetPendingMusicPlay(const std::string& url, const std::string& title, const std::string& lyrics, const std::string& filename) {
     pending_music_play_.url = url;
     pending_music_play_.title = title;
+    pending_music_play_.filename = filename;
     pending_music_play_.lyrics = lyrics;
     pending_music_play_.has_pending = true;
     ESP_LOGI(TAG, "Pending music play set: %s", title.c_str());
@@ -335,6 +407,9 @@ void Application::ExecutePendingMusicPlay() {
     pending_music_play_.has_pending = false;
     ESP_LOGI(TAG, "Executing pending music play: %s", play.title.c_str());
     PlayMusic(play.url, play.title, play.lyrics);
+    if (play.lyrics.empty()) {
+        StartAsyncLyricsFetch(play.title, play.filename);
+    }
 }
 
 void Application::LoadPomodoroConfig() {
@@ -1659,6 +1734,13 @@ void Application::HandleWakeWordDetectedEvent() {
     }
 
     auto state = GetDeviceState();
+
+    // If music is playing, treat the wake word as an interrupt command:
+    // stop playback first, then continue with the normal wake-word flow so
+    // the device returns to the eye/listening interface cleanly.
+    if (music_player_.IsPlaying() || HasPendingMusicPlay()) {
+        StopMusic();
+    }
     
     if (state == kDeviceStateIdle) {
         audio_service_.EncodeWakeWord();
@@ -1957,6 +2039,12 @@ void Application::WakeWordInvoke(const std::string& wake_word) {
     }
 
     auto state = GetDeviceState();
+
+    // While music is playing, "你好小智" should first exit music playback
+    // and then enter the regular wake/listening flow.
+    if (music_player_.IsPlaying() || HasPendingMusicPlay()) {
+        StopMusic();
+    }
     
     if (state == kDeviceStateIdle) {
         audio_service_.EncodeWakeWord();
@@ -2299,42 +2387,34 @@ void Application::SetRealtimeMotorCommand(int direction, int speed) {
         uint32_t max_duty = (1 << pwm_resolution_bits_) - 1;
         uint32_t duty = (speed * max_duty) / 100;
 
-        // 使用 ledc fade 实现平滑过渡（模式 A：把目标通道设置为 PWM，其他通道为 0）
-        // 先把所有通道设为 0（平滑）
-        ledc_set_fade_with_time(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, 0, pwm_ramp_ms_);
-        ledc_fade_start(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, LEDC_FADE_NO_WAIT);
-        ledc_set_fade_with_time(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_1, 0, pwm_ramp_ms_);
-        ledc_fade_start(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_1, LEDC_FADE_NO_WAIT);
-        ledc_set_fade_with_time(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_2, 0, pwm_ramp_ms_);
-        ledc_fade_start(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_2, LEDC_FADE_NO_WAIT);
-        ledc_set_fade_with_time(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_3, 0, pwm_ramp_ms_);
-        ledc_fade_start(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_3, LEDC_FADE_NO_WAIT);
+        auto set_motor_duty = [&](ledc_channel_t channel, uint32_t target_duty) {
+            ledc_set_duty(LEDC_LOW_SPEED_MODE, channel, target_duty);
+            ledc_update_duty(LEDC_LOW_SPEED_MODE, channel);
+        };
 
-        // 然后根据方向，把对应的通道设为目标占空比（平滑）
+        // 先把所有通道清零，再打开对应方向的通道。
+        set_motor_duty(LEDC_CHANNEL_0, 0);
+        set_motor_duty(LEDC_CHANNEL_1, 0);
+        set_motor_duty(LEDC_CHANNEL_2, 0);
+        set_motor_duty(LEDC_CHANNEL_3, 0);
+
+        // 然后根据方向，把对应的通道设为目标占空比。
         switch (direction) {
             case 1: // 右: LF (ch0) + RB (ch3)
-                ledc_set_fade_with_time(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, duty, pwm_ramp_ms_);
-                ledc_fade_start(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, LEDC_FADE_NO_WAIT);
-                ledc_set_fade_with_time(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_3, duty, pwm_ramp_ms_);
-                ledc_fade_start(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_3, LEDC_FADE_NO_WAIT);
+                set_motor_duty(LEDC_CHANNEL_0, duty);
+                set_motor_duty(LEDC_CHANNEL_3, duty);
                 break;
             case 2: // 后退: LB (ch1) + RB (ch3)
-                ledc_set_fade_with_time(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_1, duty, pwm_ramp_ms_);
-                ledc_fade_start(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_1, LEDC_FADE_NO_WAIT);
-                ledc_set_fade_with_time(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_3, duty, pwm_ramp_ms_);
-                ledc_fade_start(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_3, LEDC_FADE_NO_WAIT);
+                set_motor_duty(LEDC_CHANNEL_1, duty);
+                set_motor_duty(LEDC_CHANNEL_3, duty);
                 break;
             case 3: // 左: LB (ch1) + RF (ch2)
-                ledc_set_fade_with_time(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_1, duty, pwm_ramp_ms_);
-                ledc_fade_start(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_1, LEDC_FADE_NO_WAIT);
-                ledc_set_fade_with_time(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_2, duty, pwm_ramp_ms_);
-                ledc_fade_start(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_2, LEDC_FADE_NO_WAIT);
+                set_motor_duty(LEDC_CHANNEL_1, duty);
+                set_motor_duty(LEDC_CHANNEL_2, duty);
                 break;
             case 4: // 前进: LF (ch0) + RF (ch2)
-                ledc_set_fade_with_time(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, duty, pwm_ramp_ms_);
-                ledc_fade_start(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, LEDC_FADE_NO_WAIT);
-                ledc_set_fade_with_time(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_2, duty, pwm_ramp_ms_);
-                ledc_fade_start(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_2, LEDC_FADE_NO_WAIT);
+                set_motor_duty(LEDC_CHANNEL_0, duty);
+                set_motor_duty(LEDC_CHANNEL_2, duty);
                 break;
             default:
                 break;
@@ -2376,15 +2456,14 @@ void Application::StopRealtimeMotorControl() {
     realtime_control_active_.store(false);
     current_motor_priority_.store(0); // Reset priority
     if (motor_pwm_initialized_member_) {
-        // 平滑降到 0
-        ledc_set_fade_with_time(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, 0, pwm_ramp_ms_);
-        ledc_fade_start(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, LEDC_FADE_NO_WAIT);
-        ledc_set_fade_with_time(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_1, 0, pwm_ramp_ms_);
-        ledc_fade_start(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_1, LEDC_FADE_NO_WAIT);
-        ledc_set_fade_with_time(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_2, 0, pwm_ramp_ms_);
-        ledc_fade_start(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_2, LEDC_FADE_NO_WAIT);
-        ledc_set_fade_with_time(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_3, 0, pwm_ramp_ms_);
-        ledc_fade_start(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_3, LEDC_FADE_NO_WAIT);
+        ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, 0);
+        ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
+        ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_1, 0);
+        ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_1);
+        ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_2, 0);
+        ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_2);
+        ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_3, 0);
+        ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_3);
     } else if (motor_gpio_initialized_member_) {
         gpio_set_level(MOTOR_LF_GPIO, 0);
         gpio_set_level(MOTOR_LB_GPIO, 0);
@@ -2455,11 +2534,6 @@ void Application::InitMotorPwm() {
     if (ledc_channel_config(&ch) != ESP_OK) {
         ESP_LOGE(TAG, "InitMotorPwm: ledc_channel_config ch3 failed");
     }
-    // Install fade service for smooth transitions
-    if (ledc_fade_func_install(0) != ESP_OK) {
-        ESP_LOGW(TAG, "InitMotorPwm: ledc_fade_func_install failed or already installed");
-    }
-
     motor_pwm_initialized_member_ = true;
     ESP_LOGI(TAG, "InitMotorPwm: initialized (freq=%dHz, bits=%d, ramp=%dms)", pwm_freq_hz_, pwm_resolution_bits_, pwm_ramp_ms_);
 }

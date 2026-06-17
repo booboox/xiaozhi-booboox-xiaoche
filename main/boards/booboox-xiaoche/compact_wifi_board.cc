@@ -566,12 +566,10 @@ private:
 
                 std::string stream_url = "http://mobi666.ccwu.cc/stream/" + UrlEncode(file);
 
-                // Fetch lyrics
                 std::string lyrics_url = "http://mobi666.ccwu.cc/api/lyrics?title="
                     + UrlEncode(song_name) + "&filename=" + UrlEncode(file);
                 std::string lyrics_json = HttpGet(lyrics_url);
 
-                // Extract lyrics text from JSON response
                 std::string lyrics_text;
                 if (!lyrics_json.empty()) {
                     cJSON* lrc_root = cJSON_Parse(lyrics_json.c_str());
@@ -584,7 +582,7 @@ private:
                     }
                 }
 
-                Application::GetInstance().SetPendingMusicPlay(stream_url, song_name, lyrics_text);
+                Application::GetInstance().SetPendingMusicPlay(stream_url, song_name, lyrics_text, file);
                 return std::string("正在播放: ") + song_name;
             });
 
