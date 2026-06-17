@@ -22,14 +22,66 @@ extern "C" void HandleMotorActionForEmotion(const char* emotion);
 #include <driver/i2c_master.h>
 #include <esp_lcd_panel_ops.h>
 #include <esp_lcd_panel_vendor.h>
+#include <esp_http_client.h>
+#include <cJSON.h>
 #include <utility>
 #include <string>
+#include <algorithm>
 
 #ifdef SH1106
 #include <esp_lcd_panel_sh1106.h>
 #endif
 
 #define TAG "CompactWifiBoard"
+
+static std::string UrlEncode(const std::string& s) {
+    std::string out;
+    for (unsigned char c : s) {
+        if (isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
+            out += c;
+        } else if (c == ' ') {
+            out += "%20";
+        } else {
+            char hex[4];
+            snprintf(hex, sizeof(hex), "%%%02X", c);
+            out += hex;
+        }
+    }
+    return out;
+}
+
+static std::string HttpGet(const std::string& url) {
+    esp_http_client_config_t cfg = {};
+    cfg.url = url.c_str();
+    cfg.timeout_ms = 10000;
+    cfg.buffer_size = 4096;
+    cfg.buffer_size_tx = 2048;
+    auto client = esp_http_client_init(&cfg);
+    if (!client) {
+        ESP_LOGE(TAG, "HttpGet: init failed for %s", url.c_str());
+        return {};
+    }
+    std::string result;
+    if (esp_http_client_open(client, 0) == ESP_OK) {
+        int64_t content_len = esp_http_client_fetch_headers(client);
+        ESP_LOGI(TAG, "HttpGet: %s -> status=%d, len=%lld", url.c_str(), esp_http_client_get_status_code(client), content_len);
+        char buf[2048];
+        int len;
+        while ((len = esp_http_client_read(client, buf, sizeof(buf) - 1)) > 0) {
+            buf[len] = 0;
+            result += buf;
+        }
+        if (len < 0) {
+            ESP_LOGE(TAG, "HttpGet: read error %d", len);
+        }
+    } else {
+        ESP_LOGE(TAG, "HttpGet: open failed for %s", url.c_str());
+    }
+    esp_http_client_close(client);
+    esp_http_client_cleanup(client);
+    ESP_LOGI(TAG, "HttpGet: result len=%zu", result.size());
+    return result;
+}
 
 // Global pointer to motor controller for Application callbacks
 class CompactWifiBoard : public WifiBoard {
@@ -437,6 +489,133 @@ private:
                     return std::string("当前未连接到WiFi网络，无法获取IP地址");
                 }
                 return std::string("当前IP地址是") + ip;
+            });
+
+        // Music playback tools
+        mcp_server.AddTool("self.music.search_and_play",
+            "Search the music library and play a song. Use when user asks to play music.\n"
+            "Args:\n"
+            "  `query`: song name or keywords to search for (e.g. '周杰伦', '晴天', '稻香')\n"
+            "Return:\n"
+            "  Result message indicating what was played or if not found",
+            PropertyList({
+                Property("query", kPropertyTypeString),
+            }),
+            [this](const PropertyList& p) -> ReturnValue {
+                std::string query = p["query"].value<std::string>();
+                if (query.empty()) {
+                    return std::string("请输入要搜索的歌曲名称");
+                }
+
+                std::string json = HttpGet("http://mobi666.ccwu.cc/api/library");
+                if (json.empty()) {
+                    return std::string("无法连接音乐服务器，请检查网络");
+                }
+
+                cJSON* root = cJSON_Parse(json.c_str());
+                if (!root || !cJSON_IsArray(root)) {
+                    cJSON_Delete(root);
+                    return std::string("解析音乐库失败");
+                }
+
+                std::string q_lower = query;
+                std::transform(q_lower.begin(), q_lower.end(), q_lower.begin(), ::tolower);
+
+                cJSON* best = nullptr;
+                int best_score = 0;
+                int count = cJSON_GetArraySize(root);
+
+                for (int i = 0; i < count; i++) {
+                    cJSON* item = cJSON_GetArrayItem(root, i);
+                    cJSON* name = cJSON_GetObjectItem(item, "name");
+                    if (!cJSON_IsString(name)) continue;
+
+                    std::string n = name->valuestring;
+                    std::string n_lower = n;
+                    std::transform(n_lower.begin(), n_lower.end(), n_lower.begin(), ::tolower);
+
+                    int score = 0;
+                    if (n_lower == q_lower) {
+                        score = 100;
+                    } else if (n_lower.find(q_lower) != std::string::npos) {
+                        score = 50;
+                    }
+
+                    if (score > best_score) {
+                        best_score = score;
+                        best = item;
+                    }
+                }
+
+                if (!best) {
+                    cJSON_Delete(root);
+                    return std::string("没有找到匹配") + query + "的歌曲";
+                }
+
+                cJSON* name = cJSON_GetObjectItem(best, "name");
+                cJSON* filename = cJSON_GetObjectItem(best, "filename");
+                if (!cJSON_IsString(name) || !cJSON_IsString(filename)) {
+                    cJSON_Delete(root);
+                    return std::string("歌曲信息异常");
+                }
+
+                std::string song_name = name->valuestring;
+                std::string file = filename->valuestring;
+
+                cJSON_Delete(root);
+
+                std::string stream_url = "http://mobi666.ccwu.cc/stream/" + UrlEncode(file);
+
+                // Fetch lyrics
+                std::string lyrics_url = "http://mobi666.ccwu.cc/api/lyrics?title="
+                    + UrlEncode(song_name) + "&filename=" + UrlEncode(file);
+                std::string lyrics_json = HttpGet(lyrics_url);
+
+                // Extract lyrics text from JSON response
+                std::string lyrics_text;
+                if (!lyrics_json.empty()) {
+                    cJSON* lrc_root = cJSON_Parse(lyrics_json.c_str());
+                    if (lrc_root) {
+                        cJSON* lrc = cJSON_GetObjectItem(lrc_root, "lyrics");
+                        if (cJSON_IsString(lrc) && lrc->valuestring) {
+                            lyrics_text = lrc->valuestring;
+                        }
+                        cJSON_Delete(lrc_root);
+                    }
+                }
+
+                Application::GetInstance().SetPendingMusicPlay(stream_url, song_name, lyrics_text);
+                return std::string("正在播放: ") + song_name;
+            });
+
+        mcp_server.AddTool("self.music.stop",
+            "Stop the currently playing music.\n"
+            "Return:\n"
+            "  Result message",
+            PropertyList(),
+            [](const PropertyList& p) -> ReturnValue {
+                auto& app = Application::GetInstance();
+                if (!app.IsMusicPlaying()) {
+                    return std::string("当前没有正在播放的音乐");
+                }
+                app.StopMusic();
+                return std::string("音乐已停止");
+            });
+
+        mcp_server.AddTool("self.music.set_volume",
+            "Set the music playback volume (also affects voice volume).\n"
+            "Alias for self.audio_speaker.set_volume\n"
+            "Args:\n"
+            "  `level`: Volume level (0-100), default 50\n"
+            "Return:\n"
+            "  Success message",
+            PropertyList({
+                Property("level", kPropertyTypeInteger, 50, 0, 100),
+            }),
+            [](const PropertyList& p) -> ReturnValue {
+                int vol = p["level"].value<int>();
+                Application::GetInstance().SetMusicVolume(vol);
+                return std::string("音量已设置为") + std::to_string(vol);
             });
     }
 

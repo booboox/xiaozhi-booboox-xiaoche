@@ -266,6 +266,77 @@ void Application::UpdateLyricsDisplay() {
     }
 }
 
+void Application::PlayMusic(const std::string& url, const std::string& title, const std::string& lyrics) {
+    music_player_.Play(url, title);
+    current_lyrics_title_ = title;
+    current_lyrics_raw_ = lyrics;
+    last_lyric_idx_ = -1;
+    music_was_playing_ = true;
+
+    auto display = Board::GetInstance().GetDisplay();
+    if (!lyrics.empty()) {
+        current_lyrics_ = ParseLrc(lyrics);
+        ESP_LOGI(TAG, "play+lyrics: len=%zu parsed=%zu", lyrics.size(), current_lyrics_.size());
+        if (!current_lyrics_.empty()) {
+            if (display) display->ShowLyricsPage(true);
+            UpdateLyricsDisplay();
+            return;
+        }
+    }
+    current_lyrics_.clear();
+    if (display) {
+        display->ShowLyricsPage(true);
+        display->SetLyricsContent(title.c_str(), -1, "等待歌词加载...", "", "", "");
+    }
+}
+
+void Application::PlayMusic(const std::string& url, const std::string& title) {
+    PlayMusic(url, title, "");
+}
+
+void Application::StopMusic() {
+    pending_music_play_.has_pending = false;
+    music_player_.Stop();
+    if (GetDeviceState() == kDeviceStateIdle) {
+        auto display = Board::GetInstance().GetDisplay();
+        if (display) {
+            display->ShowStandbyClock(true);
+            UpdateIdleClockDisplay();
+        }
+    }
+}
+
+bool Application::IsMusicPlaying() const {
+    return music_player_.IsPlaying();
+}
+
+void Application::SetMusicVolume(int volume) {
+    auto codec = Board::GetInstance().GetAudioCodec();
+    if (codec) {
+        codec->SetOutputVolume(volume);
+    }
+}
+
+void Application::SetPendingMusicPlay(const std::string& url, const std::string& title, const std::string& lyrics) {
+    pending_music_play_.url = url;
+    pending_music_play_.title = title;
+    pending_music_play_.lyrics = lyrics;
+    pending_music_play_.has_pending = true;
+    ESP_LOGI(TAG, "Pending music play set: %s", title.c_str());
+}
+
+bool Application::HasPendingMusicPlay() const {
+    return pending_music_play_.has_pending;
+}
+
+void Application::ExecutePendingMusicPlay() {
+    if (!pending_music_play_.has_pending) return;
+    auto play = pending_music_play_;
+    pending_music_play_.has_pending = false;
+    ESP_LOGI(TAG, "Executing pending music play: %s", play.title.c_str());
+    PlayMusic(play.url, play.title, play.lyrics);
+}
+
 void Application::LoadPomodoroConfig() {
     Settings settings("pomodoro", false);
     int focus_minutes = settings.GetInt("focus_minutes", 25);
@@ -689,9 +760,15 @@ void Application::Run() {
                     last_lyric_idx_ = idx;
                     UpdateLyricsDisplay();
                 }
+                music_was_playing_ = true;
             }
 
             if (GetDeviceState() == kDeviceStateIdle && !music_player_.IsPlaying()) {
+                if (music_was_playing_) {
+                    music_was_playing_ = false;
+                    display->ShowStandbyClock(true);
+                    UpdateIdleClockDisplay();
+                }
                 if (pomodoro_timer_.IsActive()) {
                     auto event = pomodoro_timer_.Tick();
                     UpdatePomodoroDisplay();
@@ -908,10 +985,18 @@ void Application::HandleActivationDoneEvent() {
             std::string status = music_player_.GetStatus();
             std::string title = music_player_.GetCurrentTitle();
             int pos_ms = music_player_.GetPositionMs();
-            char buf[256];
-            snprintf(buf, sizeof(buf), "{\"status\":\"%s\",\"title\":\"%s\",\"position_ms\":%d}",
-                     status.c_str(), title.c_str(), pos_ms);
-            return std::string(buf);
+
+            cJSON* root = cJSON_CreateObject();
+            cJSON_AddStringToObject(root, "status", status.c_str());
+            cJSON_AddStringToObject(root, "title", title.c_str());
+            cJSON_AddNumberToObject(root, "position_ms", pos_ms);
+            cJSON_AddStringToObject(root, "lyrics", current_lyrics_raw_.c_str());
+
+            char* json = cJSON_PrintUnformatted(root);
+            std::string result(json);
+            free(json);
+            cJSON_Delete(root);
+            return result;
         }
     );
 
@@ -927,6 +1012,7 @@ void Application::HandleActivationDoneEvent() {
         ESP_LOGE(TAG, "Failed to start web server");
         display->ShowNotification("Web控制启动失败", 2000);
     }
+
 }
 
 void Application::ActivationTask() {
@@ -1186,7 +1272,7 @@ void Application::InitializeProtocol() {
                         return;
                     }
                     if (GetDeviceState() == kDeviceStateSpeaking) {
-                        if (listening_mode_ == kListeningModeManualStop) {
+                        if (listening_mode_ == kListeningModeManualStop || music_player_.IsPlaying() || HasPendingMusicPlay()) {
                             SetDeviceState(kDeviceStateIdle);
                         } else {
                             SetDeviceState(kDeviceStateListening);
@@ -1657,7 +1743,23 @@ void Application::HandleStateChangedEvent() {
         case kDeviceStateUnknown:
         case kDeviceStateIdle:
             display->SetAnimatedEmotionMode(false);
-            if (pomodoro_timer_.IsActive()) {
+            if (HasPendingMusicPlay()) {
+                vTaskDelay(pdMS_TO_TICKS(20));
+                ExecutePendingMusicPlay();
+                if (music_player_.IsPlaying() && !current_lyrics_.empty()) {
+                    display->ShowLyricsPage(true);
+                    UpdateLyricsDisplay();
+                    DisplayLockGuard force_refresh(display);
+                    lv_timer_handler();
+                }
+            } else if (music_player_.IsPlaying() && !current_lyrics_.empty()) {
+                display->ShowLyricsPage(true);
+                UpdateLyricsDisplay();
+                {
+                    DisplayLockGuard force_refresh(display);
+                    lv_timer_handler();
+                }
+            } else if (pomodoro_timer_.IsActive()) {
                 display->ShowStandbyClock(false);
                 UpdatePomodoroDisplay();
             } else {

@@ -136,6 +136,24 @@ public:
     void SetAecMode(AecMode mode);
     AecMode GetAecMode() const { return aec_mode_; }
     void PlaySound(const std::string_view& sound);
+
+    // Music player control (for MCP tools and voice commands)
+    void PlayMusic(const std::string& url, const std::string& title);
+    void PlayMusic(const std::string& url, const std::string& title, const std::string& lyrics);
+    void StopMusic();
+    bool IsMusicPlaying() const;
+    void SetMusicVolume(int volume);
+
+    // Deferred music play: store play params, execute after TTS finishes
+    struct PendingMusicPlay {
+        std::string url;
+        std::string title;
+        std::string lyrics;
+        bool has_pending = false;
+    };
+    void SetPendingMusicPlay(const std::string& url, const std::string& title, const std::string& lyrics);
+    bool HasPendingMusicPlay() const;
+    void ExecutePendingMusicPlay();
     AudioService& GetAudioService() { return audio_service_; }
 
     // Motor action configuration
@@ -209,6 +227,9 @@ private:
     std::vector<LyricLine> current_lyrics_;
     std::string current_lyrics_title_;
     std::string current_lyrics_filename_;
+    std::string current_lyrics_raw_;
+    bool music_was_playing_ = false;
+    PendingMusicPlay pending_music_play_;
     bool pending_lyrics_fetch_ = false;
     int last_lyric_idx_ = -1;
 

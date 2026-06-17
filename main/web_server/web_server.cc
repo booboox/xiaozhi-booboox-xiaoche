@@ -1746,6 +1746,7 @@ async function loadLibrary() {
 
 async function playMusic(filename, title) {
     currentFilename = filename;
+    currentTitle = title;
     loadOff(filename);
     var url = MUSIC_SERVER + '/stream/' + encodeURIComponent(filename);
 
@@ -1830,6 +1831,8 @@ function parseLrc(text) {
     return out;
 }
 
+let currentTitle = '';
+
 async function updateStatus() {
     try {
         const res = await fetch('/api/music/status');
@@ -1844,6 +1847,15 @@ async function updateStatus() {
             title.textContent = data.title || '未知歌曲';
             status.textContent = data.status === 'playing' ? '▶ 播放中' : '⏳ 连接中...';
             stopBtn.disabled = false;
+            stopFastPoll(); startFastPoll();
+
+            if (data.title && data.title !== currentTitle) {
+                currentTitle = data.title;
+                currentLyrics = [];
+                if (data.lyrics) {
+                    updateWebLyrics(data.lyrics);
+                }
+            }
 
             if (data.status === 'playing' && currentLyrics.length > 0 && data.position_ms !== undefined) {
                 syncLyrics(data.position_ms / 1000);
