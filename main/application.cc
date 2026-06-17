@@ -412,6 +412,99 @@ void Application::ExecutePendingMusicPlay() {
     }
 }
 
+void Application::StartConsciousnessCheck() {
+    if (consciousness_check_pending_) return;
+    consciousness_check_pending_ = true;
+
+    struct Ctx {
+        Application* app;
+        int idle_s;
+        int hour;
+        int minute;
+    };
+
+    time_t now_t = time(nullptr);
+    struct tm tm_info;
+    localtime_r(&now_t, &tm_info);
+    auto* ctx = new Ctx{this, CONSCIOUSNESS_IDLE_S, tm_info.tm_hour, tm_info.tm_min};
+
+    xTaskCreate([](void* arg) {
+        std::unique_ptr<Ctx> ctx(static_cast<Ctx*>(arg));
+
+        char body[128];
+        snprintf(body, sizeof(body),
+            "{\"idle_s\":%d,\"hour\":%d,\"minute\":%d}",
+            ctx->idle_s, ctx->hour, ctx->minute);
+
+        esp_http_client_config_t cfg = {};
+        cfg.url = "http://mobi666.ccwu.cc/brain/think";
+        cfg.method = HTTP_METHOD_POST;
+        cfg.timeout_ms = 15000;
+        cfg.buffer_size = 4096;
+        cfg.buffer_size_tx = 2048;
+
+        std::string response;
+        auto client = esp_http_client_init(&cfg);
+        if (client) {
+            esp_http_client_set_header(client, "Content-Type", "application/json");
+            esp_http_client_set_post_field(client, body, strlen(body));
+
+            if (esp_http_client_perform(client) == ESP_OK) {
+                char buf[1024];
+                int len;
+                while ((len = esp_http_client_read(client, buf, sizeof(buf) - 1)) > 0) {
+                    buf[len] = 0;
+                    response += buf;
+                }
+            }
+            esp_http_client_cleanup(client);
+        }
+
+        ctx->app->Schedule([app = ctx->app, resp = std::move(response)]() {
+            app->consciousness_check_pending_ = false;
+
+            if (resp.empty()) {
+                app->consciousness_next_think_ms_ = esp_timer_get_time() / 1000 + 30000;
+                ESP_LOGW(TAG, "Consciousness: brain response empty, retry in 30s");
+                return;
+            }
+
+            auto root = cJSON_Parse(resp.c_str());
+            if (!root) {
+                app->consciousness_next_think_ms_ = esp_timer_get_time() / 1000 + 30000;
+                ESP_LOGW(TAG, "Consciousness: JSON parse failed");
+                return;
+            }
+
+            auto action = cJSON_GetObjectItem(root, "action");
+            auto next_think = cJSON_GetObjectItem(root, "next_think_s");
+
+            if (action && cJSON_IsString(action)) {
+                if (strcmp(action->valuestring, "speak") == 0) {
+                    auto tts_url = cJSON_GetObjectItem(root, "tts_url");
+                    if (tts_url && cJSON_IsString(tts_url)) {
+                        ESP_LOGI(TAG, "Consciousness: speak %s", tts_url->valuestring);
+                        app->music_player_.Play(tts_url->valuestring, "");
+                    }
+                } else {
+                    ESP_LOGI(TAG, "Consciousness: nothing, wait %ds", next_think ? next_think->valueint : 60);
+                }
+            }
+
+            if (next_think && cJSON_IsNumber(next_think)) {
+                app->consciousness_next_think_ms_ = esp_timer_get_time() / 1000 +
+                    static_cast<int64_t>(next_think->valueint) * 1000;
+            } else {
+                app->consciousness_next_think_ms_ = esp_timer_get_time() / 1000 + 60000;
+            }
+
+            cJSON_Delete(root);
+        });
+
+        vTaskDelete(nullptr);
+    }, "consciousness", 8192, ctx, 3, nullptr);
+}
+
 void Application::LoadPomodoroConfig() {
     Settings settings("pomodoro", false);
     int focus_minutes = settings.GetInt("focus_minutes", 25);
@@ -852,6 +945,19 @@ void Application::Run() {
                     }
                 } else {
                     UpdateIdleClockDisplay();
+                }
+            }
+
+            // Consciousness check — autonomous thinking when idle
+            {
+                int64_t now_ms = esp_timer_get_time() / 1000;
+                if (GetDeviceState() != kDeviceStateIdle || music_player_.IsPlaying() || HasPendingMusicPlay()) {
+                    int64_t min_next = now_ms + CONSCIOUSNESS_IDLE_S * 1000;
+                    if (consciousness_next_think_ms_ < min_next) {
+                        consciousness_next_think_ms_ = min_next;
+                    }
+                } else if (now_ms >= consciousness_next_think_ms_ && !consciousness_check_pending_) {
+                    StartConsciousnessCheck();
                 }
             }
 

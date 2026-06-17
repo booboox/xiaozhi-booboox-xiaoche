@@ -234,6 +234,13 @@ private:
     bool pending_lyrics_fetch_ = false;
     int last_lyric_idx_ = -1;
 
+    // Consciousness / autonomous thinking
+    static constexpr int CONSCIOUSNESS_IDLE_S = 60;
+    int consciousness_idle_counter_ = 0;
+    int64_t consciousness_next_think_ms_ = 0;
+    bool consciousness_check_pending_ = false;
+    void StartConsciousnessCheck();
+
     // Web server for remote control
     std::unique_ptr<WebServer> web_server_;
     std::function<void()> pending_local_pomodoro_command_;
