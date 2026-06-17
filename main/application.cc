@@ -95,6 +95,9 @@ Application::Application() {
     LoadMotorActionConfig();
     LoadPomodoroConfig();
 
+    // Initialize consciousness timer to ensure at least 60s idle before first check
+    consciousness_next_think_ms_ = (esp_timer_get_time() / 1000) + CONSCIOUSNESS_IDLE_S * 1000;
+
 #if CONFIG_USE_DEVICE_AEC && CONFIG_USE_SERVER_AEC
 #error "CONFIG_USE_DEVICE_AEC and CONFIG_USE_SERVER_AEC cannot be enabled at the same time"
 #elif CONFIG_USE_DEVICE_AEC
@@ -415,6 +418,7 @@ void Application::ExecutePendingMusicPlay() {
 void Application::StartConsciousnessCheck() {
     if (consciousness_check_pending_) return;
     consciousness_check_pending_ = true;
+    ESP_LOGI(TAG, "Consciousness: starting check (idle=%ds)", consciousness_idle_s_);
 
     struct Ctx {
         Application* app;
@@ -449,17 +453,23 @@ void Application::StartConsciousnessCheck() {
             esp_http_client_set_header(client, "Content-Type", "application/json");
             esp_http_client_set_post_field(client, body, strlen(body));
 
-            if (esp_http_client_perform(client) == ESP_OK) {
+            esp_err_t err = esp_http_client_perform(client);
+            if (err == ESP_OK) {
                 char buf[1024];
                 int len;
                 while ((len = esp_http_client_read(client, buf, sizeof(buf) - 1)) > 0) {
                     buf[len] = 0;
                     response += buf;
                 }
+            } else {
+                ESP_LOGE(TAG, "Consciousness: http perform error %s", esp_err_to_name(err));
             }
             esp_http_client_cleanup(client);
+        } else {
+            ESP_LOGE(TAG, "Consciousness: http client init failed");
         }
 
+        ESP_LOGI(TAG, "Consciousness: http response len=%zu", response.size());
         ctx->app->Schedule([app = ctx->app, resp = std::move(response)]() {
             app->consciousness_check_pending_ = false;
 
@@ -472,12 +482,18 @@ void Application::StartConsciousnessCheck() {
             auto root = cJSON_Parse(resp.c_str());
             if (!root) {
                 app->consciousness_next_think_ms_ = esp_timer_get_time() / 1000 + 30000;
-                ESP_LOGW(TAG, "Consciousness: JSON parse failed");
+                ESP_LOGW(TAG, "Consciousness: JSON parse failed for: %s", resp.c_str());
                 return;
             }
 
             auto action = cJSON_GetObjectItem(root, "action");
             auto next_think = cJSON_GetObjectItem(root, "next_think_s");
+            auto text_item = cJSON_GetObjectItem(root, "text");
+
+            ESP_LOGI(TAG, "Consciousness: action=%s text=%s next_think=%d",
+                action && cJSON_IsString(action) ? action->valuestring : "?",
+                text_item && cJSON_IsString(text_item) ? text_item->valuestring : "",
+                next_think && cJSON_IsNumber(next_think) ? next_think->valueint : -1);
 
             if (action && cJSON_IsString(action)) {
                 if (strcmp(action->valuestring, "speak") == 0) {
