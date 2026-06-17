@@ -426,7 +426,7 @@ void Application::StartConsciousnessCheck() {
     time_t now_t = time(nullptr);
     struct tm tm_info;
     localtime_r(&now_t, &tm_info);
-    auto* ctx = new Ctx{this, CONSCIOUSNESS_IDLE_S, tm_info.tm_hour, tm_info.tm_min};
+    auto* ctx = new Ctx{this, consciousness_idle_s_, tm_info.tm_hour, tm_info.tm_min};
 
     xTaskCreate([](void* arg) {
         std::unique_ptr<Ctx> ctx(static_cast<Ctx*>(arg));
@@ -952,11 +952,16 @@ void Application::Run() {
             {
                 int64_t now_ms = esp_timer_get_time() / 1000;
                 if (GetDeviceState() != kDeviceStateIdle || music_player_.IsPlaying() || HasPendingMusicPlay()) {
+                    consciousness_idle_s_ = 0;
                     int64_t min_next = now_ms + CONSCIOUSNESS_IDLE_S * 1000;
                     if (consciousness_next_think_ms_ < min_next) {
                         consciousness_next_think_ms_ = min_next;
                     }
-                } else if (now_ms >= consciousness_next_think_ms_ && !consciousness_check_pending_) {
+                } else {
+                    consciousness_idle_s_++;
+                }
+
+                if (now_ms >= consciousness_next_think_ms_ && !consciousness_check_pending_) {
                     StartConsciousnessCheck();
                 }
             }

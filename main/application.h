@@ -236,7 +236,7 @@ private:
 
     // Consciousness / autonomous thinking
     static constexpr int CONSCIOUSNESS_IDLE_S = 60;
-    int consciousness_idle_counter_ = 0;
+    int consciousness_idle_s_ = 0;
     int64_t consciousness_next_think_ms_ = 0;
     bool consciousness_check_pending_ = false;
     void StartConsciousnessCheck();
